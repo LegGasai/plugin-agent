@@ -1,0 +1,78 @@
+descriptor:
+  id: memory.file
+  version: 1.0.0
+  name: 文件记忆
+  description: 使用本地 JSONL 文件保存和检索智能体记忆。
+  categories: [memory]
+  tags: [记忆, 存储, 本地]
+  config_schema_ref: schema://memory.file.config.v1
+  provides:
+    - name: memory.write
+      version: 1.0.0
+      input_schema_ref: schema://memory.write.input.v1
+      output_schema_ref: schema://memory.write.output.v1
+    - name: memory.query
+      version: 1.0.0
+      input_schema_ref: schema://memory.query.input.v1
+      output_schema_ref: schema://memory.query.output.v1
+resources:
+  - kind: memory
+    id: file
+    title: File Memory
+    description: Persists and queries Agent memory from a JSONL file.
+    invoke_capability: memory.query
+    schema_refs:
+      write_input: schema://memory.write.input.v1
+      write_output: schema://memory.write.output.v1
+      query_input: schema://memory.query.input.v1
+      query_output: schema://memory.query.output.v1
+schemas:
+  - schema_ref: schema://memory.file.config.v1
+    json_schema:
+      type: object
+      additionalProperties: false
+      properties:
+        path:
+          type: string
+          title: Memory File Path
+          description: JSONL file used by this plugin instance.
+  - schema_ref: schema://memory.write.input.v1
+    json_schema:
+      type: object
+      required: [text]
+      additionalProperties: false
+      properties:
+        text:
+          type: string
+        metadata:
+          type: object
+  - schema_ref: schema://memory.write.output.v1
+    json_schema:
+      type: object
+      required: [item]
+      additionalProperties: false
+      properties:
+        item:
+          type: object
+  - schema_ref: schema://memory.query.input.v1
+    json_schema:
+      type: object
+      required: [query]
+      additionalProperties: false
+      properties:
+        query:
+          type: string
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 50
+  - schema_ref: schema://memory.query.output.v1
+    json_schema:
+      type: object
+      required: [items]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            type: object

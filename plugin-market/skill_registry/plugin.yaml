@@ -1,0 +1,110 @@
+descriptor:
+  id: skill.registry
+  version: 1.0.0
+  name: 技能注册表
+  description: 加载本地 SKILL.md 技能文件，并提供技能查询能力。
+  categories:
+  - skill
+  tags:
+  - 技能
+  - 注册表
+  - 本地
+  config_schema_ref: schema://skill.registry.config.v1
+  provides:
+  - name: skill.list
+    version: 1.0.0
+    input_schema_ref: schema://skill.list.input.v1
+    output_schema_ref: schema://skill.list.output.v1
+  - name: skill.get
+    version: 1.0.0
+    input_schema_ref: schema://skill.get.input.v1
+    output_schema_ref: schema://skill.get.output.v1
+  - name: skill.search
+    version: 1.0.0
+    input_schema_ref: schema://skill.search.input.v1
+    output_schema_ref: schema://skill.search.output.v1
+resources:
+- kind: skill
+  id: registry
+  title: Skill Registry
+  description: Lists and retrieves local markdown skills.
+  invoke_capability: skill.list
+  schema_refs:
+    list_input: schema://skill.list.input.v1
+    list_output: schema://skill.list.output.v1
+    get_input: schema://skill.get.input.v1
+    get_output: schema://skill.get.output.v1
+    search_input: schema://skill.search.input.v1
+    search_output: schema://skill.search.output.v1
+schemas:
+- schema_ref: schema://skill.registry.config.v1
+  json_schema:
+    type: object
+    additionalProperties: false
+    properties:
+      skill_dirs:
+        type: array
+        title: Skill Directories
+        items:
+          type: string
+- schema_ref: schema://skill.list.input.v1
+  json_schema:
+    type: object
+    additionalProperties: false
+    properties: {}
+- schema_ref: schema://skill.list.output.v1
+  json_schema:
+    type: object
+    required:
+    - skills
+    additionalProperties: false
+    properties:
+      skills:
+        type: array
+        items:
+          type: object
+- schema_ref: schema://skill.get.input.v1
+  json_schema:
+    type: object
+    required:
+    - skill_id
+    additionalProperties: false
+    properties:
+      skill_id:
+        type: string
+- schema_ref: schema://skill.get.output.v1
+  json_schema:
+    type: object
+    required:
+    - skill
+    additionalProperties: false
+    properties:
+      skill:
+        type: object
+- schema_ref: schema://skill.search.input.v1
+  json_schema:
+    type: object
+    required:
+    - query
+    additionalProperties: false
+    properties:
+      query:
+        type: string
+      limit:
+        type: integer
+        minimum: 1
+        maximum: 20
+- schema_ref: schema://skill.search.output.v1
+  json_schema:
+    type: object
+    required:
+    - skills
+    additionalProperties: false
+    properties:
+      skills:
+        type: array
+        items:
+          type: object
+runtime:
+  type: python.in_process
+  entrypoint: plugin.py:SkillRegistryPlugin

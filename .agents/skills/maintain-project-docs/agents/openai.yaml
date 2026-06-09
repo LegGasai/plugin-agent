@@ -1,0 +1,4 @@
+interface:
+  display_name: "Maintain Project Docs"
+  short_description: "Keep README and AGENTS guidance current"
+  default_prompt: "Use $maintain-project-docs to update this project's README.md and AGENTS.md after a code or structure change."

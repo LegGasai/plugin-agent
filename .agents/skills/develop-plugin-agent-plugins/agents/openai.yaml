@@ -1,0 +1,4 @@
+interface:
+  display_name: "Develop Plugin Agent Plugins"
+  short_description: "Build backend plugins for plugin-agent"
+  default_prompt: "Use $develop-plugin-agent-plugins to design and implement a new plugin-agent backend plugin."

@@ -1,0 +1,126 @@
+descriptor:
+  id: agent.loop.react
+  version: 1.0.0
+  name: ReAct 智能体循环
+  description: 基于模型推理、工具发现和记忆写入运行智能体对话。
+  categories: [agent_loop]
+  tags: [智能体, 推理, 工具调用]
+  config_schema_ref: schema://agent.loop.react.config.v1
+  requires:
+    - capability: model.chat
+      version: ">=1.0 <2.0"
+      required: true
+    - capability: memory.query
+      version: ">=1.0 <2.0"
+      required: true
+    - capability: memory.write
+      version: ">=1.0 <2.0"
+      required: true
+    - capability: tool.registry.list
+      version: ">=1.0 <2.0"
+      required: true
+    - capability: tool.invoke
+      version: ">=1.0 <2.0"
+      required: true
+  provides:
+    - name: agent.run
+      version: 1.0.0
+      input_schema_ref: schema://agent.run.input.v1
+      output_schema_ref: schema://agent.run.output.v1
+    - name: agent.stream
+      version: 1.0.0
+      input_schema_ref: schema://agent.run.input.v1
+      output_schema_ref: schema://agent.stream.event.v1
+resources:
+  - kind: agent_loop
+    id: react
+    title: ReAct Loop
+    description: Runs a model-driven ReAct loop for an Agent.
+    invoke_capability: agent.run
+    schema_refs:
+      input: schema://agent.run.input.v1
+      output: schema://agent.run.output.v1
+      stream_output: schema://agent.stream.event.v1
+schemas:
+  - schema_ref: schema://agent.loop.react.config.v1
+    json_schema:
+      type: object
+      additionalProperties: false
+      properties:
+        system_prompt:
+          type: string
+          title: System Prompt
+        limits:
+          type: object
+          additionalProperties: false
+          properties:
+            max_turns:
+              type: integer
+              title: Max Turns
+              minimum: 1
+              maximum: 50
+              default: 8
+            tool_timeout_ms:
+              type: integer
+              title: Tool Timeout Ms
+              minimum: 100
+              default: 3000
+            compress_after_messages:
+              type: integer
+              title: Compress After Messages
+              minimum: 1
+              default: 20
+  - schema_ref: schema://agent.run.input.v1
+    json_schema:
+      type: object
+      required: [message]
+      additionalProperties: false
+      properties:
+        message:
+          type: string
+  - schema_ref: schema://agent.run.output.v1
+    json_schema:
+      type: object
+      required: [answer, tool_calls, memory, transcript, events, tool_audit, stop_reason]
+      additionalProperties: false
+      properties:
+        answer:
+          type: string
+        tool_calls:
+          type: array
+          items:
+            type: object
+        memory:
+          type: array
+          items:
+            type: object
+        transcript:
+          type: array
+          items:
+            type: object
+        events:
+          type: array
+          items:
+            type: object
+        tool_audit:
+          type: array
+          items:
+            type: object
+        stop_reason:
+          type: string
+          enum: [final, max_turns, error]
+  - schema_ref: schema://agent.stream.event.v1
+    json_schema:
+      type: object
+      required: [type, sequence, run_id, payload]
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          enum: [run_started, memory_loaded, skills_selected, tools_loaded, model_delta, assistant_message, tool_call_started, tool_call_completed, context_compressed, run_completed, run_failed]
+        sequence:
+          type: integer
+        run_id:
+          type: string
+        payload:
+          type: object

@@ -1,0 +1,43 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv
+.pytest_cache/
+backend/.venv
+backend/.pytest_cache/
+.idea/
+.plugin-agent/
+backend/.plugin-agent/
+
+# Frontend-generated files
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Docker/runtime-local files
+docker/volumes/
+docker/.env
+
+# Local env and OS/editor files
+.env
+.env.local
+.env.*.local
+.DS_Store
+
+# Uploaded marketplace package artifacts
+plugin-market/*.pluginpkg
+!plugin-market/.gitkeep

@@ -1,0 +1,111 @@
+descriptor:
+  id: mcp.bridge
+  version: 1.0.0
+  name: MCP 桥接器
+  description: 将 stdio MCP 服务中的工具桥接到智能体工具运行时。
+  categories:
+  - mcp
+  tags:
+  - MCP
+  - 工具
+  - 桥接
+  config_schema_ref: schema://mcp.bridge.config.v1
+  requires:
+  - capability: tool.invoke
+    version: '>=1.0 <2.0'
+    required: true
+  provides:
+  - name: mcp.tools.list
+    version: 1.0.0
+    input_schema_ref: schema://mcp.tools.list.input.v1
+    output_schema_ref: schema://mcp.tools.list.output.v1
+  - name: mcp.tool.call
+    version: 1.0.0
+    input_schema_ref: schema://mcp.tool.call.input.v1
+    output_schema_ref: schema://mcp.tool.call.output.v1
+resources:
+- kind: mcp_server
+  id: bridge
+  title: MCP Bridge
+  description: Discovers and calls configured MCP stdio servers.
+  invoke_capability: mcp.tool.call
+  schema_refs:
+    list_input: schema://mcp.tools.list.input.v1
+    list_output: schema://mcp.tools.list.output.v1
+    call_input: schema://mcp.tool.call.input.v1
+    call_output: schema://mcp.tool.call.output.v1
+schemas:
+- schema_ref: schema://mcp.bridge.config.v1
+  json_schema:
+    type: object
+    additionalProperties: false
+    properties:
+      servers:
+        type: array
+        title: MCP Servers
+        items:
+          type: object
+          required:
+          - name
+          - command
+          additionalProperties: false
+          properties:
+            name:
+              type: string
+            command:
+              type: string
+            args:
+              type: array
+              items:
+                type: string
+            env:
+              type: object
+              additionalProperties:
+                type: string
+      request_timeout_seconds:
+        type: integer
+        title: Request Timeout Seconds
+        minimum: 1
+        default: 10
+- schema_ref: schema://mcp.tools.list.input.v1
+  json_schema:
+    type: object
+    additionalProperties: false
+    properties: {}
+- schema_ref: schema://mcp.tools.list.output.v1
+  json_schema:
+    type: object
+    required:
+    - tools
+    additionalProperties: false
+    properties:
+      tools:
+        type: array
+        items:
+          type: object
+- schema_ref: schema://mcp.tool.call.input.v1
+  json_schema:
+    type: object
+    required:
+    - tool_name
+    - arguments
+    additionalProperties: false
+    properties:
+      tool_name:
+        type: string
+      server:
+        type: string
+      arguments:
+        type: object
+- schema_ref: schema://mcp.tool.call.output.v1
+  json_schema:
+    type: object
+    required:
+    - result
+    additionalProperties: false
+    properties:
+      result:
+        type: object
+runtime:
+  type: python.in_process
+  entrypoint: plugin.py:MCPBridgePlugin

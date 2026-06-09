@@ -1,0 +1,133 @@
+descriptor:
+  id: tool.basic
+  version: 1.0.0
+  name: 基础工具集
+  description: 内置 echo、当前时间和数字相加等基础工具。
+  categories: [tool]
+  tags: [工具, 内置, 基础]
+  config_schema_ref: schema://tool.basic.config.v1
+  requires:
+    - capability: tool.invoke
+      version: ">=1.0 <2.0"
+      required: true
+  provides:
+    - name: tool.echo
+      version: 1.0.0
+      input_schema_ref: schema://tool.echo.input.v1
+      output_schema_ref: schema://tool.echo.output.v1
+    - name: tool.time_now
+      version: 1.0.0
+      input_schema_ref: schema://tool.time_now.input.v1
+      output_schema_ref: schema://tool.time_now.output.v1
+    - name: tool.math_add
+      version: 1.0.0
+      input_schema_ref: schema://tool.math_add.input.v1
+      output_schema_ref: schema://tool.math_add.output.v1
+resources:
+  - kind: tool
+    id: echo
+    title: Echo
+    description: Return the input text.
+    invoke_capability: tool.echo
+    schema_refs:
+      input: schema://tool.echo.input.v1
+      output: schema://tool.echo.output.v1
+  - kind: tool
+    id: time.now
+    title: Current Time
+    description: Get current time for a timezone.
+    invoke_capability: tool.time_now
+    schema_refs:
+      input: schema://tool.time_now.input.v1
+      output: schema://tool.time_now.output.v1
+  - kind: tool
+    id: math.add
+    title: Add Numbers
+    description: Add two numbers.
+    invoke_capability: tool.math_add
+    schema_refs:
+      input: schema://tool.math_add.input.v1
+      output: schema://tool.math_add.output.v1
+schemas:
+  - schema_ref: schema://tool.basic.config.v1
+    json_schema:
+      type: object
+      additionalProperties: false
+      properties:
+        timezone:
+          type: object
+          additionalProperties: false
+          properties:
+            default:
+              type: string
+              title: Default Timezone
+              default: UTC
+  - schema_ref: schema://tool.echo.input.v1
+    json_schema:
+      type: object
+      required: [text]
+      additionalProperties: false
+      properties:
+        text:
+          type: string
+  - schema_ref: schema://tool.echo.output.v1
+    json_schema:
+      type: object
+      required: [result]
+      additionalProperties: false
+      properties:
+        result:
+          type: string
+  - schema_ref: schema://tool.time_now.input.v1
+    json_schema:
+      type: object
+      additionalProperties: false
+      properties:
+        timezone:
+          type: string
+          default: UTC
+  - schema_ref: schema://tool.time_now.output.v1
+    json_schema:
+      type: object
+      required: [result]
+      additionalProperties: false
+      properties:
+        result:
+          type: object
+  - schema_ref: schema://tool.math_add.input.v1
+    json_schema:
+      type: object
+      required: [a, b]
+      additionalProperties: false
+      properties:
+        a:
+          type: number
+        b:
+          type: number
+  - schema_ref: schema://tool.math_add.output.v1
+    json_schema:
+      type: object
+      required: [result]
+      additionalProperties: false
+      properties:
+        result:
+          type: number
+tool_definitions:
+  - tool_id: echo
+    title: Echo
+    description: Return the input text.
+    input_schema_ref: schema://tool.echo.input.v1
+    output_schema_ref: schema://tool.echo.output.v1
+    invoke_capability: tool.echo
+  - tool_id: time.now
+    title: Current Time
+    description: Get current time for a timezone.
+    input_schema_ref: schema://tool.time_now.input.v1
+    output_schema_ref: schema://tool.time_now.output.v1
+    invoke_capability: tool.time_now
+  - tool_id: math.add
+    title: Add Numbers
+    description: Add two numbers.
+    input_schema_ref: schema://tool.math_add.input.v1
+    output_schema_ref: schema://tool.math_add.output.v1
+    invoke_capability: tool.math_add

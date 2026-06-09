@@ -1,0 +1,61 @@
+descriptor:
+  id: tool.greeter
+  version: 0.1.0
+  name: 问候工具
+  description: 一个用于验证用户自定义插件上传、安装和工具调用链路的简单工具插件。
+  categories: [tool]
+  tags: [工具, 示例, 测试]
+  requires:
+    - capability: tool.invoke
+      version: ">=1.0 <2.0"
+      required: true
+  provides:
+    - name: tool.greet
+      version: 1.0.0
+      input_schema_ref: schema://tool.greet.input.v1
+      output_schema_ref: schema://tool.greet.output.v1
+runtime:
+  type: python.in_process
+  entrypoint: plugin.py:GreeterToolPlugin
+resources:
+  - kind: tool
+    id: greet.hello
+    title: 问候
+    description: 根据名称和风格生成一句问候语。
+    invoke_capability: tool.greet
+    schema_refs:
+      input: schema://tool.greet.input.v1
+      output: schema://tool.greet.output.v1
+schemas:
+  - schema_ref: schema://tool.greet.input.v1
+    json_schema:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          description: 要问候的对象名称。
+        style:
+          type: string
+          enum: [friendly, cheerful, concise]
+          default: friendly
+          description: 问候语风格。
+  - schema_ref: schema://tool.greet.output.v1
+    json_schema:
+      type: object
+      required: [result]
+      additionalProperties: false
+      properties:
+        result:
+          type: object
+          required: [message, name, style]
+          additionalProperties: false
+          properties:
+            message:
+              type: string
+            name:
+              type: string
+            style:
+              type: string

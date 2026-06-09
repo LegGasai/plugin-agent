@@ -1,0 +1,6 @@
+limits:
+  max_turns: 8
+  tool_timeout_ms: 3000
+  compress_after_messages: 20
+system_prompt: |
+  You are a practical ReAct agent. Use tools when they help. If you call a tool, wait for the observation and then give a concise final answer.

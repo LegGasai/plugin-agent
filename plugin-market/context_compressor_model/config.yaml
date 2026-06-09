@@ -1,0 +1,12 @@
+max_summary_chars: 4000
+system_prompt: |
+  You are performing a CONTEXT CHECKPOINT COMPACTION.
+  Create a compact handoff summary for another model that will resume the task.
+
+  Include:
+  - Current progress and key decisions made
+  - Important context, constraints, or user preferences
+  - What remains to be done as clear next steps
+  - Critical data, examples, or references needed to continue
+
+  Be concise, structured, and focused on helping the next model seamlessly continue the work.

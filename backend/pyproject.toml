@@ -1,0 +1,25 @@
+[project]
+name = "plugin-agent"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "leggasai", email = "jyc132780208@sina.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "jsonschema>=4.26.0",
+    "packaging>=26.2",
+    "pydantic>=2.13.4",
+    "pytest>=9.0.3",
+    "pyyaml>=6.0.3",
+    "rich>=15.0.0",
+    "typer>=0.26.7",
+]
+
+[project.scripts]
+plugin-agent = "plugin_agent:main"
+
+[build-system]
+requires = ["uv_build>=0.10.11,<0.11.0"]
+build-backend = "uv_build"

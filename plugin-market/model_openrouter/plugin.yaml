@@ -1,0 +1,109 @@
+descriptor:
+  id: model.openrouter
+  version: 1.0.0
+  name: OpenRouter 模型
+  description: 通过 OpenRouter 的 OpenAI-compatible API 调用多家模型。
+  categories:
+  - model
+  tags:
+  - 模型
+  - OpenRouter
+  - 对话
+  config_schema_ref: schema://model.openrouter.config.v1
+  provides:
+  - name: model.chat
+    version: 1.0.0
+    input_schema_ref: schema://model.chat.input.v1
+    output_schema_ref: schema://model.chat.output.v1
+  - name: model.chat.stream
+    version: 1.0.0
+    input_schema_ref: schema://model.chat.input.v1
+    output_schema_ref: schema://model.chat.stream.event.v1
+resources:
+- kind: model
+  id: openrouter
+  title: OpenRouter Chat Model
+  description: Provides model.chat through OpenRouter.
+  invoke_capability: model.chat
+  schema_refs:
+    input: schema://model.chat.input.v1
+    output: schema://model.chat.output.v1
+    stream_output: schema://model.chat.stream.event.v1
+schemas:
+- schema_ref: schema://model.openrouter.config.v1
+  json_schema:
+    type: object
+    additionalProperties: false
+    properties:
+      api_key:
+        type:
+        - string
+        - 'null'
+        title: API Key
+        x-secret: true
+        x-encrypted: true
+      base_url:
+        type: string
+        title: Base URL
+        default: https://openrouter.ai/api/v1
+      model:
+        type: string
+        title: Model
+        default: openai/gpt-4o-mini
+      timeout_seconds:
+        type: integer
+        title: Timeout Seconds
+        minimum: 1
+        default: 60
+- schema_ref: schema://model.chat.input.v1
+  json_schema:
+    type: object
+    required:
+    - messages
+    - tools
+    additionalProperties: false
+    properties:
+      system_prompt:
+        type: string
+      messages:
+        type: array
+        items:
+          type: object
+      tools:
+        type: array
+        items:
+          type: object
+- schema_ref: schema://model.chat.output.v1
+  json_schema:
+    type: object
+    required:
+    - message
+    additionalProperties: false
+    properties:
+      message:
+        type: object
+      raw: {}
+- schema_ref: schema://model.chat.stream.event.v1
+  json_schema:
+    type: object
+    required:
+    - type
+    - sequence
+    - run_id
+    - payload
+    additionalProperties: false
+    properties:
+      type:
+        type: string
+        enum:
+        - model_delta
+        - assistant_message
+      sequence:
+        type: integer
+      run_id:
+        type: string
+      payload:
+        type: object
+runtime:
+  type: python.in_process
+  entrypoint: plugin.py:OpenRouterModelPlugin
