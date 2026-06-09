@@ -1,50 +1,33 @@
-# plugin-agent
+# Plugin Agent
 
-Lightweight pluginized Agent platform in a small monorepo.
+<p align="center">
+  <strong>一个轻量、可插拔、面向产品化实验的 Agent 平台</strong>
+</p>
 
-## Structure
+<p align="center">
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white">
+  <img alt="React" src="https://img.shields.io/badge/React-Console-61DAFB?logo=react&logoColor=111111">
+  <img alt="Docker" src="https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white">
+  <img alt="Plugins" src="https://img.shields.io/badge/Pluginized-Agent-7C3AED">
+</p>
 
-```text
-plugin-agent/
-  backend/    # Python Agent kernel, SDK, plugins, HTTP API, CLI
-  frontend/   # React console
-  docker/     # Docker Compose deployment files
-  plugin-market/ # local marketplace plugin packages for development-time install simulation
-  test-plugin/ # sample external plugin package for upload/install smoke checks
-  .agents/skills/ # project-local Codex skills
-  AGENTS.md   # root guidance for future agents
-```
+Plugin Agent 把 Agent 系统拆成一个稳定内核和一组可安装插件：模型、工具、记忆、技能、MCP 桥接、上下文压缩和 Agent Loop 都可以独立演进。你可以像组装产品一样创建 Agent、配置插件实例、绑定能力提供方，并在控制台里直接运行带会话历史的流式对话。
 
-The backend owns plugin lifecycle, capability discovery, capability routing, schema validation, plugin instances, agents, streaming runs, and persistence. Plugin packages declare their config schema, plugin instances store their own config and local secret refs, and the frontend is the operator console for plugin market, agent square, plugin instance configuration, provider binding, and streaming chat runtime.
+这个项目适合用来验证插件化 Agent 架构、构建内部工具型 Agent、试验模型/工具/记忆组合，以及开发可分发的本地插件包。
 
-During local development, `plugin-market/` simulates a remote marketplace. The previously built plugins now live there as unpacked plugin packages, uploaded `.pluginpkg` files are copied there, and installed plugins are unpacked into `.plugin-agent/installed-plugins/`. Installed packages are stored by `package_id/version`, and Agent plugin instances pin the selected version. When an installed package has the same `package_id` as a built-in compatibility plugin, the installed package is loaded first.
+## 核心能力
 
-`test-plugin/` is a small external greeter plugin used for manual upload/install checks without touching backend private plugin code.
+- 插件市场：通过 `plugin-market/` 模拟本地插件市场，支持上传、安装、卸载和版本化安装插件包。
+- Agent 装配：每个 Agent 都由独立插件实例组成，配置、密钥引用、生命周期和版本互不干扰。
+- 能力路由：插件通过 `Capability` 调用彼此，内核负责 provider 选择、schema 校验、错误诊断和流式调用。
+- 可视化控制台：React 控制台提供插件市场、Agent 广场、工作台、插件配置、会话列表和流式聊天。
+- 运行时诊断：当模型配置缺失、依赖能力缺失或多个 provider 冲突时，后端会给出 Agent 运行时报告。
+- 会话与记忆：会话历史由主机持久化，长期记忆由插件提供，Agent Loop 可以同时使用两者。
+- Docker 部署：提供 backend + frontend 的 Docker Compose，一条命令即可启动完整控制台。
 
-## Quickstart
+## 快速开始
 
-Backend:
-
-```bash
-cd backend
-uv run plugin-agent serve --host 127.0.0.1 --port 8000
-```
-
-Frontend:
-
-```bash
-cd frontend
-yarn install
-yarn dev --host 127.0.0.1 --port 5173
-```
-
-Open:
-
-```text
-http://127.0.0.1:5173
-```
-
-Docker:
+### Docker 一键启动
 
 ```bash
 cd docker
@@ -52,39 +35,62 @@ cp .env.example .env
 docker compose up --build
 ```
 
-Open:
+打开控制台：
 
 ```text
 http://127.0.0.1:8080
 ```
 
-## Verification
+Docker 会把仓库内的 `plugin-market/` 复制进后端镜像，并把运行时数据持久化到 `docker/volumes/plugin-agent-data`。
 
-Backend:
+### 本地开发启动
+
+后端：
 
 ```bash
 cd backend
-uv run pytest -q
+uv run plugin-agent serve --host 127.0.0.1 --port 8000
 ```
 
-Frontend:
+前端：
 
 ```bash
 cd frontend
-yarn build
+yarn install
+yarn dev --host 127.0.0.1 --port 5173
 ```
 
-Docker config:
+打开：
+
+```text
+http://127.0.0.1:5173
+```
+
+## 项目结构
+
+```text
+plugin-agent/
+  backend/          Python Agent 内核、HTTP API、SDK、内置插件和测试
+  frontend/         React 控制台
+  docker/           Docker Compose 部署配置
+  plugin-market/    本地插件市场
+  test-plugin/      示例外部插件
+  .agents/skills/   项目级 Codex Skills
+```
+
+## 参考文档
+
+- [后端指南](./backend/README.md)
+- [前端协作说明](./frontend/AGENTS.md)
+- [Docker 部署说明](./docker/README.md)
+- [项目协作规则](./AGENTS.md)
+- [后端开发规则](./backend/AGENTS.md)
+- [项目文档维护 Skill](./.agents/skills/maintain-project-docs/SKILL.md)
+
+## 验证命令
 
 ```bash
+cd backend && uv run pytest -q
+cd frontend && yarn build
 docker compose -f docker/docker-compose.yml config
 ```
-
-## More Docs
-
-- [Root agent guidance](./AGENTS.md)
-- [Backend guide](./backend/README.md)
-- [Backend agent guidance](./backend/AGENTS.md)
-- [Frontend agent guidance](./frontend/AGENTS.md)
-- [Docker deployment guide](./docker/README.md)
-- [Project docs maintenance skill](./.agents/skills/maintain-project-docs/SKILL.md)
