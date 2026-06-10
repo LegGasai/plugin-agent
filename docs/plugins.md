@@ -12,7 +12,7 @@
 | `context.manager` | 上下文管理器 | 上下文 | 统一调用压缩 provider，并把压缩结果转换为后续模型消息。 |
 | `context.compressor.summary` | 上下文摘要压缩 | 上下文 | 不依赖模型的简短摘要压缩，适合轻量默认配置。 |
 | `context.compressor.model` | 模型上下文摘要压缩 | 上下文 | 使用已绑定模型生成质量更高的上下文摘要。 |
-| `memory.file` | 文件记忆 | 记忆 | 用本地 JSONL 文件保存和检索 Agent 记忆。 |
+| `memory.file` | 文件记忆 | 记忆 | 用 `MEMORY.md` 和 Markdown 文件保存 Agent 记忆。 |
 | `skill.registry` | 技能注册表 | 技能 | 加载本地 `SKILL.md`，提供技能列表、激活和文件读取能力。 |
 | `tool.runtime` | 工具运行时 | 工具运行时 | 发现工具资源、校验参数并路由 `tool.invoke`。 |
 | `tool.basic` | 基础工具集 | 工具 | 提供 echo、当前时间和数字相加等基础工具。 |
@@ -29,7 +29,7 @@
 
 - 作用：基于模型推理、工具发现、工具调用、记忆读取、Skills 目录提示和 MCP 工具上下文运行 Agent 对话。
 - 提供能力：`agent.run`、`agent.stream`。
-- 必需依赖能力：`model.chat`、`memory.query`、`memory.write`、`tool.registry.list`、`tool.invoke`。
+- 必需依赖能力：`model.chat`、`memory.read`、`memory.write`、`tool.registry.list`、`tool.invoke`。
 - 可选增强能力：`skill.list`、`skill.activate`、`skill.read_file`、`mcp.tools.list`。缺失时 Agent 仍可启动；调用失败默认发出运行时告警并继续。
 - 资源：`agent_loop: react`。
 - 配置要点：可设置 system prompt；可配置最大推理轮数、工具调用超时、触发上下文压缩的消息阈值；v2 还支持配置 Skills 目录提示、工具提示开关、MCP 工具目录提示和失败策略。
@@ -84,12 +84,12 @@
 
 ### `memory.file` - 文件记忆
 
-- 作用：使用本地 JSONL 文件保存和检索 Agent 记忆。
-- 提供能力：`memory.write`、`memory.query`。
+- 作用：使用绑定的记忆目录保存 Agent 记忆。目录内 `MEMORY.md` 是索引文件，每行使用 `文件路径: 描述` 指向具体 Markdown 记忆文件，例如 `user.md` 或 `project.md`。
+- 提供能力：`memory.read`、`memory.write`。
 - 依赖能力：无。
-- 资源：`memory: file`。
-- 配置要点：可设置记忆文件路径；未显式配置时，后端会为 Agent 生成运行时记忆文件路径。
-- 使用建议：适合本地开发和轻量记忆验证；生产环境可后续替换成数据库或向量存储插件。
+- 资源：`memory: directory`、`tool: memory.read`、`tool: memory.write`。
+- 配置要点：可设置 `memory_dir` 绑定记忆目录；未配置时默认使用该插件包目录下的 `memory/`。
+- 使用建议：ReAct Loop 会把 `MEMORY.md` 索引作为系统提示词注入模型。模型需要读取详情时调用 `memory.read`，需要持久保存用户偏好或项目事实时调用 `memory.write`，由插件维护索引和具体 Markdown 文件的一致性。
 
 ### `skill.registry` - 技能注册表
 
@@ -97,7 +97,7 @@
 - 提供能力：`skill.list`、`skill.activate`、`skill.read_file`。
 - 依赖能力：无。
 - 资源：`skill: registry`。
-- 配置要点：可配置 `skill_dirs`，指向一个或多个技能目录。
+- 配置要点：默认不内置任何 Skill；可配置 `skill_dirs`，指向一个或多个技能目录。
 - 工具资源：`activate_skill` 返回指定 Skill 的元数据和文件树；`read_skill_file` 读取指定 Skill 目录内的普通文件，禁止路径逃逸。
 - 使用建议：Agent Loop 先通过 `skill.list` 将可用 Skills 的名称和描述注入模型上下文；模型判断需要某个 Skill 时，再调用 `activate_skill` 和 `read_skill_file` 按需读取。
 

@@ -11,8 +11,12 @@ import pytest
 from plugin_agent.kernel import KernelInvokeError
 from plugin_agent.kernel import AgentKernel
 from plugin_agent.http_service import PluginAgentHTTPServer, create_app_state
-from plugin_agent.plugin_store import load_installed_plugin_class
+from plugin_agent.plugin_store import install_market_package, load_installed_plugin_class
 from plugin_agent_sdk import Plugin, PluginPackage
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+MARKET_FIXTURES_DIR = PROJECT_ROOT / "plugin-market"
 
 
 def request_json(base_url, method, path, payload=None):
@@ -25,6 +29,13 @@ def request_json(base_url, method, path, payload=None):
     )
     with urllib.request.urlopen(req, timeout=5) as response:
         return json.loads(response.read().decode())
+
+
+def seed_market_package(market_dir: Path, package_dir_name: str) -> None:
+    source = MARKET_FIXTURES_DIR / package_dir_name
+    destination = market_dir / package_dir_name
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(source, destination)
 
 
 def request_multipart_upload(base_url, files):
@@ -98,6 +109,70 @@ class CapturingModelPlugin(Plugin):
             self.requests.append(payload)
             return {"message": {"role": "assistant", "content": "模型生成的摘要", "tool_calls": []}, "raw": {}}
         return super().invoke(capability, payload, context)
+
+
+class StreamingProbeModelPlugin(Plugin):
+    descriptor = {
+        "id": "model.streaming_probe",
+        "version": "1.0.0",
+        "provides": [
+            {
+                "name": "model.chat",
+                "version": "1.0.0",
+                "input_schema_ref": "schema://model.chat.input.v1",
+                "output_schema_ref": "schema://model.chat.output.v1",
+            },
+            {
+                "name": "model.chat.stream",
+                "version": "1.0.0",
+                "input_schema_ref": "schema://model.chat.input.v1",
+                "output_schema_ref": "schema://model.chat.stream.output.v1",
+            },
+        ],
+    }
+    schemas = [
+        {
+            "schema_ref": "schema://model.chat.input.v1",
+            "json_schema": {
+                "type": "object",
+                "required": ["messages", "tools"],
+                "properties": {
+                    "messages": {"type": "array"},
+                    "tools": {"type": "array"},
+                    "system_prompt": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+        },
+        {
+            "schema_ref": "schema://model.chat.output.v1",
+            "json_schema": {
+                "type": "object",
+                "required": ["message"],
+                "properties": {"message": {"type": "object"}, "raw": {}},
+                "additionalProperties": False,
+            },
+        },
+        {"schema_ref": "schema://model.chat.stream.output.v1", "json_schema": {"type": "object"}},
+    ]
+
+    def __init__(self):
+        super().__init__()
+        self.resumed_after_first_delta = False
+
+    def invoke(self, capability, payload, context):
+        if capability == "model.chat":
+            return {"message": {"role": "assistant", "content": "AB", "tool_calls": []}, "raw": {}}
+        return super().invoke(capability, payload, context)
+
+    def stream(self, capability, payload, context):
+        if capability == "model.chat.stream":
+            yield {"type": "model_delta", "payload": {"delta": "A"}}
+            self.resumed_after_first_delta = True
+            yield {"type": "model_delta", "payload": {"delta": "B"}}
+            yield {"type": "assistant_message", "payload": {"message": {"role": "assistant", "content": "AB", "tool_calls": []}}}
+            return
+        yield from super().stream(capability, payload, context)
 
 
 def write_weather_plugin_package(tmp_path: Path) -> Path:
@@ -293,7 +368,9 @@ class MultifileToolPlugin(Plugin):
 
 
 def test_market_upload_install_and_runtime_loads_local_plugin(tmp_path):
-    state = create_app_state(runtime_dir=tmp_path / "runtime", market_dir=tmp_path / "plugin-market")
+    market_dir = tmp_path / "plugin-market"
+    seed_market_package(market_dir, "tool_runtime_plugin")
+    state = create_app_state(runtime_dir=tmp_path / "runtime", market_dir=market_dir)
     server = PluginAgentHTTPServer(state=state, host="127.0.0.1", port=0)
     server.start()
     try:
@@ -345,7 +422,9 @@ def test_market_upload_install_and_runtime_loads_local_plugin(tmp_path):
 
 
 def test_agent_instances_pin_installed_plugin_versions(tmp_path):
-    state = create_app_state(runtime_dir=tmp_path / "runtime", market_dir=tmp_path / "plugin-market")
+    market_dir = tmp_path / "plugin-market"
+    seed_market_package(market_dir, "tool_runtime_plugin")
+    state = create_app_state(runtime_dir=tmp_path / "runtime", market_dir=market_dir)
     server = PluginAgentHTTPServer(state=state, host="127.0.0.1", port=0)
     server.start()
     try:
@@ -442,8 +521,28 @@ def test_marketplace_marks_active_installed_version_and_newer_available(tmp_path
     assert by_version["0.2.0"]["update_available"] is True
 
 
-def test_marketplace_marks_active_builtin_latest_version_as_installed(tmp_path):
+def test_default_market_plugins_are_auto_installed_from_marketplace(tmp_path):
     state = create_app_state(runtime_dir=tmp_path / "runtime")
+
+    installed_packages = {
+        package["package_id"]: package
+        for package in state.assembly.list_installed_plugin_packages()
+    }
+    for package_id in [
+        "memory.file",
+        "skill.registry",
+        "model.openai_compatible",
+        "model.openrouter",
+        "model.deepseek",
+        "tool.runtime",
+        "tool.basic",
+        "context.compressor.summary",
+        "context.manager",
+        "mcp.bridge",
+        "agent.loop.react",
+    ]:
+        assert installed_packages[package_id]["source"] == "installed"
+    assert installed_packages["agent.loop.react"]["version"] == "2.0.0"
 
     market_package = next(
         package for package in state.assembly.marketplace()["market_plugin_packages"]
@@ -452,33 +551,36 @@ def test_marketplace_marks_active_builtin_latest_version_as_installed(tmp_path):
 
     assert market_package["installed"] is True
     assert market_package["installed_version"] == "1.1.0"
-    assert market_package["installed_source"] == "builtin"
+    assert market_package["installed_source"] == "installed"
     assert market_package["latest_version"] == "1.1.0"
     assert market_package["has_newer_version"] is False
     assert market_package["update_available"] is False
 
 
-def test_default_package_selection_prefers_newer_builtin_over_older_installed(tmp_path):
-    state = create_app_state(runtime_dir=tmp_path / "runtime")
-    builtin_package = state.assembly.store.get_package("context.compressor.summary", "1.1.0")
-    state.assembly.store.delete_package("context.compressor.summary", "1.1.0")
-    old_package = {
-        **builtin_package,
-        "version": "1.0.0",
-        "source": "installed",
-        "installed_path": str(tmp_path / "old-installed-context-compressor"),
-    }
-    state.assembly.store.upsert_package(PluginPackage.model_validate(old_package))
-    state.assembly.refresh_plugin_packages()
+def test_default_market_install_skips_when_any_version_is_already_installed(tmp_path):
+    runtime_dir = tmp_path / "runtime"
+    install_market_package(MARKET_FIXTURES_DIR / "agent_loop_react", runtime_dir / "installed-plugins")
 
-    selected = state.assembly.store.get_package("context.compressor.summary")
+    state = create_app_state(runtime_dir=runtime_dir)
 
-    assert selected["source"] == "builtin"
-    assert selected["version"] == "1.1.0"
+    assert state.assembly.store.get_package("agent.loop.react", "1.0.0")["source"] == "installed"
+    with pytest.raises(KeyError):
+        state.assembly.store.get_package("agent.loop.react", "2.0.0")
+    assert state.assembly.store.get_package("agent.loop.react")["version"] == "1.0.0"
+
+
+def test_custom_empty_market_does_not_register_builtin_fallbacks(tmp_path):
+    state = create_app_state(runtime_dir=tmp_path / "runtime", market_dir=tmp_path / "empty-market")
+
+    packages = state.assembly.list_installed_plugin_packages()
+
+    assert packages == []
 
 
 def test_installed_plugin_can_import_sibling_python_modules(tmp_path):
-    state = create_app_state(runtime_dir=tmp_path / "runtime", market_dir=tmp_path / "plugin-market")
+    market_dir = tmp_path / "plugin-market"
+    seed_market_package(market_dir, "tool_runtime_plugin")
+    state = create_app_state(runtime_dir=tmp_path / "runtime", market_dir=market_dir)
     package_path = write_multifile_tool_package(tmp_path)
     state.assembly.reserve_upload({"path": str(package_path)})
     state.assembly.install_market_plugin({"package_id": "tool.multifile"})
@@ -628,6 +730,7 @@ def test_project_plugin_market_contains_migrated_plugins(tmp_path):
 
 def test_installed_package_overrides_same_id_builtin_package(tmp_path):
     market_dir = tmp_path / "plugin-market"
+    seed_market_package(market_dir, "tool_runtime_plugin")
     package_dir = market_dir / "tool-basic"
     package_dir.mkdir(parents=True)
     (package_dir / "plugin.yaml").write_text(
@@ -854,7 +957,7 @@ def test_react_v2_injects_skills_and_mcp_tool_context(tmp_path):
     model = CapturingModelPlugin()
     kernel = AgentKernel()
     kernel.load_plugins([
-        FileMemoryPlugin({"path": str(tmp_path / "memory.jsonl")}),
+        FileMemoryPlugin({"memory_dir": str(tmp_path / "memory")}),
         FakeSkillRegistryPlugin(),
         FakeMCPPlugin(),
         model,
@@ -874,8 +977,39 @@ def test_react_v2_injects_skills_and_mcp_tool_context(tmp_path):
     assert "Use the platform tools when they help" not in prompt_text
     tool_names = {tool["function"]["name"] for tool in model.requests[0]["tools"]}
     assert {"activate_skill", "read_skill_file"}.issubset(tool_names)
+    assert {"memory__read", "memory__write"}.issubset(tool_names)
     assert "mcp.local.echo" in prompt_text
     assert events[-1]["type"] == "run_completed"
+
+
+def test_react_v2_forwards_model_stream_deltas_as_they_arrive(tmp_path):
+    from plugin_agent.plugins.memory_file.plugin import FileMemoryPlugin
+    from plugin_agent.plugins.tool_runtime_plugin.plugin import ToolRuntimePlugin
+
+    state = create_app_state(runtime_dir=tmp_path / "runtime")
+    installed = state.assembly.install_market_plugin({"package_id": "agent.loop.react", "version": "2.0.0"})
+    plugin_class = load_installed_plugin_class(installed["installed_path"], installed["plugin_package"]["entrypoint"])
+    model = StreamingProbeModelPlugin()
+    kernel = AgentKernel()
+    kernel.load_plugins([
+        FileMemoryPlugin({"memory_dir": str(tmp_path / "memory")}),
+        model,
+        ToolRuntimePlugin(),
+        plugin_class({"limits": {"max_turns": 1, "compress_after_messages": 99}}),
+    ])
+    kernel.start_all()
+
+    stream = kernel.stream("agent.stream", {"message": "stream please"}, {"agent_id": "agent-test"})
+    first_delta = next(event for event in stream if event["type"] == "model_delta")
+
+    assert first_delta["payload"]["delta"] == "A"
+    assert model.resumed_after_first_delta is False
+
+    remaining_events = list(stream)
+
+    assert model.resumed_after_first_delta is True
+    assert any(event["type"] == "model_delta" and event["payload"]["delta"] == "B" for event in remaining_events)
+    assert remaining_events[-1]["type"] == "run_completed"
 
 
 def test_react_v2_warns_and_continues_when_optional_skill_list_fails(tmp_path):
@@ -888,7 +1022,7 @@ def test_react_v2_warns_and_continues_when_optional_skill_list_fails(tmp_path):
     model = CapturingModelPlugin()
     kernel = AgentKernel()
     kernel.load_plugins([
-        FileMemoryPlugin({"path": str(tmp_path / "memory.jsonl")}),
+        FileMemoryPlugin({"memory_dir": str(tmp_path / "memory")}),
         FailingSkillListPlugin(),
         model,
         ToolRuntimePlugin(),

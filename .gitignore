@@ -31,6 +31,8 @@ pnpm-debug.log*
 # Docker/runtime-local files
 docker/volumes/
 docker/.env
+backend/src/plugin_agent/plugins/memory_file/memory/
+plugin-market/memory_file/memory/
 
 # Local env and OS/editor files
 .env

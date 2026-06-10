@@ -2,77 +2,102 @@ descriptor:
   id: memory.file
   version: 1.0.0
   name: 文件记忆
-  description: 使用本地 JSONL 文件保存和检索智能体记忆。
-  categories: [memory]
-  tags: [记忆, 存储, 本地]
+  description: 使用 Markdown 目录保存和读取智能体记忆。
+  categories: [memory, tool]
+  tags: [记忆, 存储, 本地, Markdown]
   config_schema_ref: schema://memory.file.config.v1
   provides:
+    - name: memory.read
+      version: 1.0.0
+      input_schema_ref: schema://memory.read.input.v1
+      output_schema_ref: schema://memory.read.output.v1
     - name: memory.write
       version: 1.0.0
       input_schema_ref: schema://memory.write.input.v1
       output_schema_ref: schema://memory.write.output.v1
-    - name: memory.query
-      version: 1.0.0
-      input_schema_ref: schema://memory.query.input.v1
-      output_schema_ref: schema://memory.query.output.v1
 resources:
   - kind: memory
-    id: file
-    title: File Memory
-    description: Persists and queries Agent memory from a JSONL file.
-    invoke_capability: memory.query
+    id: directory
+    title: Markdown Memory
+    description: Stores Agent memory as MEMORY.md plus markdown memory files.
+    invoke_capability: memory.read
     schema_refs:
+      read_input: schema://memory.read.input.v1
+      read_output: schema://memory.read.output.v1
       write_input: schema://memory.write.input.v1
       write_output: schema://memory.write.output.v1
-      query_input: schema://memory.query.input.v1
-      query_output: schema://memory.query.output.v1
+  - kind: tool
+    id: memory.read
+    title: Read Memory
+    description: Read MEMORY.md or a specific markdown memory file from the bound memory directory.
+    invoke_capability: memory.read
+    schema_refs:
+      input: schema://memory.read.input.v1
+      output: schema://memory.read.output.v1
+  - kind: tool
+    id: memory.write
+    title: Write Memory
+    description: Write or append a markdown memory file and update MEMORY.md with its description.
+    invoke_capability: memory.write
+    schema_refs:
+      input: schema://memory.write.input.v1
+      output: schema://memory.write.output.v1
 schemas:
   - schema_ref: schema://memory.file.config.v1
     json_schema:
       type: object
       additionalProperties: false
       properties:
+        memory_dir:
+          type: [string, "null"]
+          title: Memory Directory
+          description: Directory containing MEMORY.md and markdown memory files. Defaults to the plugin package memory directory.
+        max_file_bytes:
+          type: integer
+          title: Max File Bytes
+          minimum: 1024
+          default: 524288
+  - schema_ref: schema://memory.read.input.v1
+    json_schema:
+      type: object
+      additionalProperties: false
+      properties:
         path:
           type: string
-          title: Memory File Path
-          description: JSONL file used by this plugin instance.
+          default: MEMORY.md
+          description: Relative markdown path to read. Omit or use MEMORY.md to read the memory index.
+  - schema_ref: schema://memory.read.output.v1
+    json_schema:
+      type: object
+      required: [result]
+      additionalProperties: false
+      properties:
+        result:
+          type: object
   - schema_ref: schema://memory.write.input.v1
     json_schema:
       type: object
-      required: [text]
+      required: [path, description, content]
       additionalProperties: false
       properties:
-        text:
+        path:
           type: string
-        metadata:
-          type: object
+          description: Relative markdown memory file path, for example user.md or project.md. MEMORY.md is updated automatically.
+        description:
+          type: string
+          description: One-line MEMORY.md index description for this memory file.
+        content:
+          type: string
+          description: Markdown content to write into the memory file.
+        mode:
+          type: string
+          enum: [replace, append]
+          default: replace
   - schema_ref: schema://memory.write.output.v1
     json_schema:
       type: object
-      required: [item]
+      required: [result]
       additionalProperties: false
       properties:
-        item:
+        result:
           type: object
-  - schema_ref: schema://memory.query.input.v1
-    json_schema:
-      type: object
-      required: [query]
-      additionalProperties: false
-      properties:
-        query:
-          type: string
-        limit:
-          type: integer
-          minimum: 1
-          maximum: 50
-  - schema_ref: schema://memory.query.output.v1
-    json_schema:
-      type: object
-      required: [items]
-      additionalProperties: false
-      properties:
-        items:
-          type: array
-          items:
-            type: object

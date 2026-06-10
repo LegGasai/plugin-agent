@@ -105,7 +105,6 @@ class ReactAgentLoopPlugin(PluginBase):
                 final_answer = assistant.get("content", "")
                 stop_reason = "final"
                 final_payload = self._final_payload(final_answer, stop_reason, memory, transcript, events, tool_audit, tool_calls)
-                self._write_memory(user_text, final_answer, tool_calls, context)
                 yield emit("run_completed", final_payload)
                 break
 
@@ -137,7 +136,6 @@ class ReactAgentLoopPlugin(PluginBase):
 
         if stop_reason == "max_turns":
             final_payload = self._final_payload(final_answer, stop_reason, memory, transcript, events, tool_audit, tool_calls)
-            self._write_memory(user_text, final_answer, tool_calls, context)
             yield emit("run_completed", final_payload)
 
     def _invoke_tool_with_timeout(self, tool_id: str, arguments: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
@@ -227,19 +225,20 @@ class ReactAgentLoopPlugin(PluginBase):
 
     def _load_memory(self, user_text: str, context: dict[str, Any]) -> list[dict[str, Any]]:
         assert self.kernel is not None
-        limit = self.config.get("limits", {}).get("memory_limit", 5)
-        memory = self.kernel.invoke("memory.query", {"query": user_text, "limit": limit}, context).payload["items"]
-        if not memory:
-            memory = self.kernel.invoke("memory.query", {"query": "", "limit": limit}, context).payload["items"]
-        return memory
+        result = self.kernel.invoke("memory.read", {"path": "MEMORY.md"}, context).payload["result"]
+        return result.get("entries", [])
 
     def _memory_prompt(self, memory: list[dict[str, Any]]) -> str:
-        lines = []
-        for item in memory:
-            metadata = item.get("metadata") or {}
-            kind = metadata.get("kind", "memory")
-            lines.append(f"- [{kind}] {item.get('text', '')}")
-        return "Relevant memory from previous interactions:\n" + "\n".join(lines)
+        lines = [f"{item.get('path')}: {item.get('description', '')}".strip() for item in memory]
+        return (
+            "Auto memory is enabled. The memory index contains these entries:\n"
+            "<memory>\n"
+            + "\n".join(lines)
+            + "\n</memory>\n\n"
+            "Use `memory.read` to inspect a memory file before relying on its details.\n"
+            "Use `memory.write` when the user asks you to remember durable facts or when a stable project/user preference should be saved.\n"
+            "Memory writes must keep the format consistent: update MEMORY.md with `path: description` and store details in markdown files such as user.md or project.md."
+        )
 
     def _history_messages(self, context: dict[str, Any]) -> list[dict[str, Any]]:
         history = []
@@ -273,17 +272,6 @@ class ReactAgentLoopPlugin(PluginBase):
         elif summary:
             model_messages[:] = [{"role": "system", "content": f"Conversation summary so far: {summary}"}, model_messages[-1]]
         return result
-
-    def _write_memory(self, user_text: str, assistant_text: str, tool_calls: list[dict[str, Any]], context: dict[str, Any]) -> None:
-        assert self.kernel is not None
-        try:
-            self.kernel.invoke("memory.write", {"text": user_text, "metadata": {"kind": "user_message"}}, context)
-            if assistant_text:
-                self.kernel.invoke("memory.write", {"text": assistant_text, "metadata": {"kind": "assistant_message"}}, context)
-            if tool_calls:
-                self.kernel.invoke("memory.write", {"text": f"tool_calls: {tool_calls}", "metadata": {"kind": "tool_trace"}}, context)
-        except Exception:
-            return
 
     def _final_payload(
         self,

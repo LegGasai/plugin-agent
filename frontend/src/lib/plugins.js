@@ -1,7 +1,7 @@
 export const DEFAULT_PACKAGES = [
   'memory.file',
   'skill.registry',
-  'model.openai_compatible',
+  'model.deepseek',
   'tool.runtime',
   'tool.basic',
   'context.compressor.summary',
@@ -11,14 +11,14 @@ export const DEFAULT_PACKAGES = [
 ];
 
 export const PACKAGE_CN = {
-  'agent.loop.react': { name: 'ReAct 智能体循环', description: '基于模型推理、工具调用和记忆写入的智能体运行循环。' },
+  'agent.loop.react': { name: 'ReAct 智能体循环', description: '基于模型推理、工具调用和 Markdown 记忆索引的智能体运行循环。' },
   'agent.loop.codex_bridge': { name: 'Codex Bridge', description: '通过本地 codex exec 运行任务，并桥接为 Agent 流式输出。' },
   'agent.loop.claude_code_bridge': { name: 'Claude Code Bridge', description: '通过本地 claude --print 运行任务，并桥接为 Agent 流式输出。' },
   'model.openai_compatible': { name: 'OpenAI 兼容模型', description: '调用兼容 OpenAI Chat Completions 的模型服务。' },
   'model.openrouter': { name: 'OpenRouter 模型', description: '通过 OpenRouter 的 OpenAI-compatible API 调用多家模型。' },
   'model.deepseek': { name: 'DeepSeek 模型', description: '通过 DeepSeek 的 OpenAI-compatible API 调用 DeepSeek 模型。' },
-  'memory.file': { name: '文件记忆', description: '使用本地 JSONL 文件保存和检索智能体记忆。' },
-  'skill.registry': { name: '技能注册表', description: '加载本地 SKILL.md 技能文件，并提供查询能力。' },
+  'memory.file': { name: '文件记忆', description: '使用 MEMORY.md 和 Markdown 文件保存智能体记忆。' },
+  'skill.registry': { name: '技能注册表', description: '加载本地 SKILL.md 技能文件，并提供列表、激活和文件读取能力。' },
   'tool.runtime': { name: '工具运行时', description: '统一发现工具资源、校验参数并路由工具调用。' },
   'tool.basic': { name: '基础工具集', description: '内置 echo、当前时间和数字相加等基础工具。' },
   'context.manager': { name: '上下文管理器', description: '通过插件能力编排上下文压缩和消息替换。' },
@@ -127,7 +127,7 @@ function inferResource(plugin) {
   const capabilityNames = (plugin.provides || []).map((capability) => capability.name);
   if (id === 'agent.loop.react' || capabilityNames.includes('agent.run')) return { kind: 'agent_loop', id: 'agent_loop', title: 'Agent Loop', description: '智能体运行循环', invoke_capability: 'agent.run' };
   if (id?.startsWith('model.') || capabilityNames.includes('model.chat')) return { kind: 'model', id: 'model', title: '模型', description: '模型对话能力', invoke_capability: 'model.chat' };
-  if (id === 'memory.file' || capabilityNames.some((name) => name.startsWith('memory.'))) return { kind: 'memory', id: 'memory', title: '记忆', description: '记忆读写能力', invoke_capability: 'memory.query' };
+  if (id === 'memory.file' || capabilityNames.some((name) => name.startsWith('memory.'))) return { kind: 'memory', id: 'memory', title: '记忆', description: '记忆读写能力', invoke_capability: 'memory.read' };
   if (id === 'skill.registry' || capabilityNames.some((name) => name.startsWith('skill.'))) return { kind: 'skill', id: 'skill', title: '技能', description: '技能注册表', invoke_capability: 'skill.list' };
   if (id === 'mcp.bridge' || capabilityNames.some((name) => name.startsWith('mcp.'))) return { kind: 'mcp_server', id: 'mcp', title: 'MCP 桥接', description: 'MCP 工具桥接', invoke_capability: 'mcp.tool.call' };
   if (id === 'tool.runtime') return { kind: 'tool_runtime', id: 'tool_runtime', title: '工具运行时', description: '工具发现与调用', invoke_capability: 'tool.invoke' };

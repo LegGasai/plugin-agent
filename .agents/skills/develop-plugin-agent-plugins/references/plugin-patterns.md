@@ -33,7 +33,7 @@ Checklist:
 - input/output schemas with `additionalProperties: false`
 - tests invoke through both direct capability and `tool.invoke` when tool runtime is in scope
 
-Representative built-in: `backend/src/plugin_agent/plugins/tool_basic/`.
+Representative package: `plugin-market/tool_basic/` with compatibility implementation in `backend/src/plugin_agent/plugins/tool_basic/`.
 
 ## Model Provider
 
@@ -41,7 +41,7 @@ Use when providing normalized `model.chat`.
 
 Checklist:
 
-- provide `model.chat` with the shared schema refs currently used by model built-ins
+- provide `model.chat` with the shared schema refs currently used by model marketplace packages
 - keep provider-specific API responses out of Agent loop code
 - normalize output to `{"message": {"role": "assistant", "content": str, "tool_calls": [...]}, "raw": ...}`
 - parse tool call arguments into dicts; preserve unparseable strings under a safe key such as `"_raw"`
@@ -49,7 +49,7 @@ Checklist:
 
 For OpenAI-compatible providers, subclass or mirror `OpenAIChatModelPluginBase` from `model_openai_compatible/plugin.py` when that keeps behavior identical.
 
-Representative built-ins: `model_openai_compatible`, `model_openrouter`, `model_deepseek`.
+Representative packages: `model_openai_compatible`, `model_openrouter`, `model_deepseek`.
 
 ## Memory Provider
 
@@ -63,7 +63,7 @@ Checklist:
 - return stable item objects and include caller metadata when useful
 - avoid global state shared across plugin instances
 
-Representative built-in: `memory_file`.
+Representative package: `memory_file`.
 
 ## Agent Loop
 
@@ -78,7 +78,7 @@ Checklist:
 - return transcript/events/audit structures that make failures diagnosable
 - do not parse provider-specific raw model responses
 
-Representative built-in: `agent_loop_react`.
+Representative package: `agent_loop_react`.
 
 ## Bridge or Dynamic Tool Provider
 
@@ -92,7 +92,7 @@ Checklist:
 - clean up subprocesses, sockets, or clients in `stop()`
 - make ambiguity explicit in payload or config instead of guessing
 
-Representative built-in: `mcp_bridge_plugin`.
+Representative package: `mcp_bridge_plugin`.
 
 ## Test Skeleton
 

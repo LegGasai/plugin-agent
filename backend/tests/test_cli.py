@@ -29,7 +29,7 @@ def test_cli_inspects_saved_agent_runtime(tmp_path):
     assembly = AgentAssemblyService(runtime_dir=runtime_dir)
     agent = assembly.create_agent(
         "CLI Agent",
-        plugin_ids=["memory.file", "skill.registry", "model.openai_compatible", "tool.runtime", "tool.basic", "agent.loop.react"],
+        plugin_ids=["memory.file", "skill.registry", "model.openai_compatible", "tool.runtime", "tool.basic", "mcp.bridge", "agent.loop.react"],
         configs={"model.openai_compatible": {"api_key": "test-key"}},
     )
 

@@ -35,6 +35,18 @@ export function AgentSidebar({
     Boolean(agentDetails)
     && (draftName.trim() !== (agentDetails.name || '') || draftDescription.trim() !== (agentDetails.description || ''))
   ), [agentDetails, draftDescription, draftName]);
+  const pluginConfigItems = useMemo(() => (
+    (agentDetails?.plugin_instances || [])
+      .map((instance, index) => ({
+        instance,
+        index,
+        diagnostics: diagnosticsForInstance(diagnostics, instance),
+      }))
+      .sort((left, right) => (
+        diagnosticSortRank(left.diagnostics) - diagnosticSortRank(right.diagnostics)
+        || left.index - right.index
+      ))
+  ), [agentDetails?.plugin_instances, diagnostics]);
 
   async function handleAgentSubmit(event) {
     event.preventDefault();
@@ -115,8 +127,7 @@ export function AgentSidebar({
           <small>{agentDetails?.plugin_instances?.length || 0} 个插件</small>
         </div>
         <div className="plugin-config-list">
-          {(agentDetails?.plugin_instances || []).map((instance) => {
-            const instanceDiagnostics = diagnosticsForInstance(diagnostics, instance);
+          {pluginConfigItems.map(({ instance, diagnostics: instanceDiagnostics }) => {
             return (
               <PluginConfigPanel
                 key={instance.instance_id}
@@ -165,6 +176,12 @@ function diagnosticsForInstance(diagnostics = [], instance) {
     const message = String(diagnostic.message || '').toLowerCase();
     return instanceTokens.some((token) => message.includes(token));
   });
+}
+
+function diagnosticSortRank(diagnostics = []) {
+  if (diagnostics.some((diagnostic) => diagnostic.severity !== 'warning')) return 0;
+  if (diagnostics.length) return 1;
+  return 2;
 }
 
 function RuntimeOverview({

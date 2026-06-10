@@ -35,6 +35,42 @@ def request_sse(base_url, path, payload):
         ]
 
 
+class FakeStreamingModelResponse:
+    def __init__(self, content):
+        self.content = content
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return None
+
+    def __iter__(self):
+        yield (
+            "data: "
+            + json.dumps({"choices": [{"delta": {"content": self.content}}]}, ensure_ascii=False)
+            + "\n\n"
+        ).encode()
+        yield b"data: [DONE]\n\n"
+
+
+def patch_streaming_model_response(monkeypatch, responder, captured_messages=None):
+    original_urlopen = urllib.request.urlopen
+
+    def fake_urlopen(request, timeout=None, *args, **kwargs):
+        url = request.full_url if isinstance(request, urllib.request.Request) else str(request)
+        if url.startswith("https://model.test/"):
+            body = json.loads((request.data or b"{}").decode("utf-8"))
+            if captured_messages is not None:
+                captured_messages.append(body.get("messages", []))
+            return FakeStreamingModelResponse(responder(body))
+        if timeout is None:
+            return original_urlopen(request, *args, **kwargs)
+        return original_urlopen(request, timeout=timeout, *args, **kwargs)
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+
 def test_model_api_key_can_come_from_plugin_config(monkeypatch):
     captured = {}
 
@@ -80,7 +116,7 @@ def test_http_service_lists_plugins_updates_config_and_assembles_agent(tmp_path)
             base,
             "POST",
             "/api/agents/assemble",
-            {"plugin_ids": ["memory.file", "skill.registry", "model.openai_compatible", "tool.runtime", "tool.basic", "agent.loop.react"]},
+            {"plugin_ids": ["memory.file", "skill.registry", "model.openai_compatible", "tool.runtime", "tool.basic", "mcp.bridge", "agent.loop.react"]},
         )
         assert assembly["status"] == "ready"
         assert any(cap["name"] == "agent.run" for cap in assembly["capabilities"])
@@ -167,18 +203,7 @@ def test_agents_can_be_created_listed_and_run_with_selected_plugins(tmp_path):
 
 
 def test_http_service_streams_saved_agent_events(tmp_path, monkeypatch):
-    from plugin_agent.plugins.model_openai_compatible.plugin import OpenAICompatibleModelPlugin
-
-    def fake_stream(self, capability, payload, context):
-        yield {"type": "model_delta", "sequence": 0, "run_id": context["run_id"], "payload": {"delta": "pong"}}
-        yield {
-            "type": "assistant_message",
-            "sequence": 1,
-            "run_id": context["run_id"],
-            "payload": {"message": {"role": "assistant", "content": "pong", "tool_calls": []}},
-        }
-
-    monkeypatch.setattr(OpenAICompatibleModelPlugin, "stream", fake_stream)
+    patch_streaming_model_response(monkeypatch, lambda body: "pong")
 
     state = create_app_state(runtime_dir=tmp_path)
     server = PluginAgentHTTPServer(state=state, host="127.0.0.1", port=0)
@@ -192,7 +217,7 @@ def test_http_service_streams_saved_agent_events(tmp_path, monkeypatch):
             {
                 "name": "Streaming Agent",
                 "plugin_ids": ["memory.file", "skill.registry", "model.openai_compatible", "tool.runtime", "tool.basic", "agent.loop.react"],
-                "configs": {"model.openai_compatible": {"api_key": "secret", "model": "local-model"}},
+                "configs": {"model.openai_compatible": {"api_key": "secret", "base_url": "https://model.test/v1", "model": "local-model"}},
             },
         )["agent"]
 
@@ -206,21 +231,12 @@ def test_http_service_streams_saved_agent_events(tmp_path, monkeypatch):
 
 
 def test_http_service_streams_saved_agent_with_session_history(tmp_path, monkeypatch):
-    from plugin_agent.plugins.model_openai_compatible.plugin import OpenAICompatibleModelPlugin
-
     captured_messages = []
 
-    def fake_stream(self, capability, payload, context):
-        captured_messages.append(payload["messages"])
-        content = "我看到了历史 key 123987" if any("123987" in message.get("content", "") for message in payload["messages"]) else "已记录"
-        yield {
-            "type": "assistant_message",
-            "sequence": 0,
-            "run_id": context["run_id"],
-            "payload": {"message": {"role": "assistant", "content": content, "tool_calls": []}},
-        }
+    def responder(body):
+        return "我看到了历史 key 123987" if any("123987" in message.get("content", "") for message in body.get("messages", [])) else "已记录"
 
-    monkeypatch.setattr(OpenAICompatibleModelPlugin, "stream", fake_stream)
+    patch_streaming_model_response(monkeypatch, responder, captured_messages)
 
     state = create_app_state(runtime_dir=tmp_path)
     server = PluginAgentHTTPServer(state=state, host="127.0.0.1", port=0)
@@ -234,7 +250,7 @@ def test_http_service_streams_saved_agent_with_session_history(tmp_path, monkeyp
             {
                 "name": "Session History Agent",
                 "plugin_ids": ["memory.file", "skill.registry", "model.openai_compatible", "tool.runtime", "tool.basic", "agent.loop.react"],
-                "configs": {"model.openai_compatible": {"api_key": "secret", "model": "local-model"}},
+                "configs": {"model.openai_compatible": {"api_key": "secret", "base_url": "https://model.test/v1", "model": "local-model"}},
             },
         )["agent"]
         session = request_json(base, "POST", f"/api/agents/{created['id']}/sessions", {})["session"]
@@ -258,19 +274,11 @@ def test_http_service_streams_saved_agent_with_session_history(tmp_path, monkeyp
 
 
 def test_http_service_does_not_leak_memory_between_sessions(tmp_path, monkeypatch):
-    from plugin_agent.plugins.model_openai_compatible.plugin import OpenAICompatibleModelPlugin
+    def responder(body):
+        full_context = "\n".join(message.get("content", "") for message in body.get("messages", []))
+        return "密码是 123987" if "123987" in full_context else "我不知道密码"
 
-    def fake_stream(self, capability, payload, context):
-        full_context = "\n".join(message.get("content", "") for message in payload["messages"])
-        content = "密码是 123987" if "123987" in full_context else "我不知道密码"
-        yield {
-            "type": "assistant_message",
-            "sequence": 0,
-            "run_id": context["run_id"],
-            "payload": {"message": {"role": "assistant", "content": content, "tool_calls": []}},
-        }
-
-    monkeypatch.setattr(OpenAICompatibleModelPlugin, "stream", fake_stream)
+    patch_streaming_model_response(monkeypatch, responder)
 
     state = create_app_state(runtime_dir=tmp_path)
     server = PluginAgentHTTPServer(state=state, host="127.0.0.1", port=0)
@@ -284,7 +292,7 @@ def test_http_service_does_not_leak_memory_between_sessions(tmp_path, monkeypatc
             {
                 "name": "Session Isolation Agent",
                 "plugin_ids": ["memory.file", "skill.registry", "model.openai_compatible", "tool.runtime", "tool.basic", "agent.loop.react"],
-                "configs": {"model.openai_compatible": {"api_key": "secret", "model": "local-model"}},
+                "configs": {"model.openai_compatible": {"api_key": "secret", "base_url": "https://model.test/v1", "model": "local-model"}},
             },
         )["agent"]
         first = request_json(base, "POST", f"/api/agents/{created['id']}/sessions", {"title": "密码会话"})["session"]
@@ -300,18 +308,7 @@ def test_http_service_does_not_leak_memory_between_sessions(tmp_path, monkeypatc
 
 
 def test_http_service_streams_adhoc_agent_events(tmp_path, monkeypatch):
-    from plugin_agent.plugins.model_openai_compatible.plugin import OpenAICompatibleModelPlugin
-
-    def fake_stream(self, capability, payload, context):
-        yield {"type": "model_delta", "sequence": 0, "run_id": context["run_id"], "payload": {"delta": "adhoc"}}
-        yield {
-            "type": "assistant_message",
-            "sequence": 1,
-            "run_id": context["run_id"],
-            "payload": {"message": {"role": "assistant", "content": "adhoc", "tool_calls": []}},
-        }
-
-    monkeypatch.setattr(OpenAICompatibleModelPlugin, "stream", fake_stream)
+    patch_streaming_model_response(monkeypatch, lambda body: "adhoc")
 
     state = create_app_state(runtime_dir=tmp_path)
     server = PluginAgentHTTPServer(state=state, host="127.0.0.1", port=0)
@@ -323,7 +320,7 @@ def test_http_service_streams_adhoc_agent_events(tmp_path, monkeypatch):
             {
                 "message": "ping",
                 "plugin_ids": ["memory.file", "skill.registry", "model.openai_compatible", "tool.runtime", "tool.basic", "agent.loop.react"],
-                "configs": {"model.openai_compatible": {"api_key": "secret", "model": "local-model"}},
+                "configs": {"model.openai_compatible": {"api_key": "secret", "base_url": "https://model.test/v1", "model": "local-model"}},
             },
         )
 

@@ -1,6 +1,6 @@
 ---
 name: develop-plugin-agent-plugins
-description: Develop backend plugins for the plugin-agent monorepo. Use when Codex needs to design, create, modify, or test plugin-agent plugins, plugin manifests, config schemas, capabilities, resources, tool/model/memory/agent-loop/MCP plugins, built-in plugin registration, or plugin SDK usage.
+description: Develop backend plugins for the plugin-agent monorepo. Use when Codex needs to design, create, modify, or test plugin-agent plugins, plugin manifests, config schemas, capabilities, resources, tool/model/memory/agent-loop/MCP plugins, default marketplace installation, or plugin SDK usage.
 ---
 
 # Develop Plugin Agent Plugins
@@ -12,7 +12,7 @@ Build plugin-agent plugins as microkernel extensions. Keep the backend kernel pr
 ## Start Here
 
 1. Read `/Users/leggasai/projects/pyProjects/plugin-agent/AGENTS.md` and `backend/AGENTS.md` before changing backend code.
-2. Inspect the closest built-in plugin under `backend/src/plugin_agent/plugins/`.
+2. Inspect the closest marketplace plugin under `plugin-market/`, or a compatibility helper under `backend/src/plugin_agent/plugins/` only when it matches the runtime behavior being tested.
 3. Read `references/plugin-mechanism.md` when designing metadata, lifecycle, capability dependencies, registration, or tests.
 4. Read `references/plugin-patterns.md` when implementing a tool, model provider, memory provider, Agent loop, MCP bridge, or other common plugin shape.
 
@@ -27,7 +27,7 @@ Build plugin-agent plugins as microkernel extensions. Keep the backend kernel pr
 - If multiple providers can satisfy the same capability, require Agent-level `capability_bindings` instead of choosing implicitly.
 - Binding data belongs to the Agent assembly, not to plugin instance config.
 - Build new product plugins as uploadable package directories with `plugin.yaml`, optional `config.yaml`, and `plugin.py`; do not write plugin source directly into `.plugin-agent/installed-plugins/`.
-- Use built-in plugin layout under `backend/src/plugin_agent/plugins/` only for host compatibility/runtime plugins that must ship with the backend.
+- Use `backend/src/plugin_agent/plugins/` only for host compatibility/runtime helpers and direct provider tests. Product plugins should be marketplace packages.
 
 ## Development Workflow
 
@@ -49,8 +49,8 @@ Build plugin-agent plugins as microkernel extensions. Keep the backend kernel pr
 4. Package and register the plugin:
    - for a new product plugin, prepare an uploadable package directory and include `runtime.type: python.in_process` plus `runtime.entrypoint: plugin.py:<PluginClass>` in `plugin.yaml`.
    - install product plugins through the frontend marketplace upload flow; treat `plugin-market/` as internal storage rather than user-facing instructions.
-   - for a true built-in, add imports and entries to `PLUGIN_FACTORIES` in `backend/src/plugin_agent/assembly.py`.
-   - add a built-in to `DEFAULT_AGENT_PLUGIN_IDS` only when it should participate in new default Agents.
+   - add a package to `DEFAULT_PLUGIN_INSTALLS` only when the backend should auto-install it from `plugin-market/` on startup.
+   - add a package to `DEFAULT_AGENT_PLUGIN_IDS` only when it should participate in new default Agents.
    - update `frontend/src/lib/plugins.js` only if frontend labels or selection behavior need to change.
 5. Test the smallest useful surface:
    - package discovery and manifest/config loading.

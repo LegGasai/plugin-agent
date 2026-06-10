@@ -46,7 +46,8 @@ Do not add backend source, backend tests, or frontend source files at the reposi
 - The backend kernel is the private host/runtime.
 - `backend/src/plugin_agent_sdk/` is the public plugin SDK surface.
 - Third-party plugins should depend on the SDK, not private kernel implementation.
-- User-facing plugin installation should go through the frontend upload/install flow; `backend/src/plugin_agent/plugins/` is for host compatibility implementations.
+- User-facing plugin installation should go through the frontend upload/install flow; default product plugins are auto-installed from `plugin-market/` into the runtime installed-plugin directory.
+- `backend/src/plugin_agent/plugins/` is for host compatibility implementations and direct provider tests, not the product package registry.
 - The frontend should consume backend HTTP APIs through `frontend/src/lib/api.js`.
 
 ## Verification
