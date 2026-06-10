@@ -79,7 +79,7 @@ http://127.0.0.1:5173
 
 ```text
 plugin-agent/
-  backend/          Python Agent 内核、HTTP API、SDK、兼容插件实现和测试
+  backend/          Python Agent 内核、产品服务/存储层、HTTP API、SDK、兼容插件实现和测试
   frontend/         React 控制台
   docker/           Docker Compose 部署配置
   docs/             用户文档
@@ -87,6 +87,8 @@ plugin-agent/
   plugin-market/    本地插件市场包
   .agents/skills/   项目级 Codex Skills
 ```
+
+后端内部按职责分层：`services/` 承载 Agent 装配、运行时和会话编排，`stores/` 承载 SQLite/secret 持久化，`models/` 放内部类型记录，`utils/` 放纯工具函数；`plugin_agent.assembly` 保留为兼容入口。
 
 ## 插件市场
 

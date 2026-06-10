@@ -7,6 +7,10 @@ Guidance for agents working in `backend/`.
 This subrepo contains the Python backend:
 
 - Private kernel and runtime in `src/plugin_agent/`.
+- Product orchestration services in `src/plugin_agent/services/`; `src/plugin_agent/assembly.py` is a compatibility facade that re-exports the service entrypoints.
+- SQLite and secret persistence in `src/plugin_agent/stores/`.
+- Internal typed records in `src/plugin_agent/models/`.
+- Pure config, version, and time helpers in `src/plugin_agent/utils/`.
 - Public plugin SDK in `src/plugin_agent_sdk/`.
 - Local marketplace plugin packages in `../plugin-market/`.
 - Compatibility implementations and direct provider test fixtures in `src/plugin_agent/plugins/`.
@@ -104,6 +108,17 @@ Do not collapse plugin instances back into global plugin IDs.
 Do not add plugin enable/disable semantics for this phase. A plugin participates in an Agent only when that Agent has a plugin instance for it.
 
 Sessions are product/runtime state, not plugin-owned state. The host stores session messages and passes them to Agent Loop plugins through `context["history_messages"]`; memory plugins still own longer-lived memory through memory capabilities. Markdown memory providers should expose `memory.read` and `memory.write` tools, keep `MEMORY.md` as an index, and let Agent Loop plugins inject only the index unless the model explicitly reads a memory file.
+
+## Backend Layering
+
+Keep backend product code layered:
+
+- `services/`: product workflows such as Agent assembly, marketplace install/uninstall, runtime inspection, plugin instance config, and session run/stream orchestration.
+- `stores/`: persistence boundaries only. Stores should not build kernels, know HTTP routes, or call plugin capabilities.
+- `models/`: internal typed records and DTO-style shapes. Prefer `TypedDict` or dataclasses for stable database and service records instead of unbounded `dict[str, Any]`.
+- `utils/`: pure helper functions with no store/service/kernel state.
+
+Use `plugin_agent.assembly` as a stable compatibility import for existing callers, but put new implementation code in the layered modules above. Keep dynamic plugin payloads, JSON Schemas, and arbitrary plugin config as `dict[str, Any]`; add typed outer records around stable product objects such as Agent, PluginInstance, Session, and SessionMessage.
 
 ## Adding Plugins
 

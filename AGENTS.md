@@ -5,7 +5,7 @@ This repository is a small monorepo for a lightweight pluginized Agent platform.
 ## Subrepos
 
 - `backend/`
-  - Python Agent kernel, public plugin SDK, built-in plugins, HTTP API, CLI, and tests.
+  - Python Agent kernel, product services/stores, public plugin SDK, built-in plugins, HTTP API, CLI, and tests.
   - Read `backend/AGENTS.md` before changing backend code.
 - `frontend/`
   - React console for plugin market, agent square, plugin instance configuration, provider binding, session history, and streaming chat runtime.
@@ -44,6 +44,7 @@ Do not add backend source, backend tests, or frontend source files at the reposi
 ## Core Product Boundaries
 
 - The backend kernel is the private host/runtime.
+- Backend product logic is layered under `backend/src/plugin_agent/services/`, `stores/`, `models/`, and `utils/`; keep `backend/src/plugin_agent/assembly.py` as a compatibility facade.
 - `backend/src/plugin_agent_sdk/` is the public plugin SDK surface.
 - Third-party plugins should depend on the SDK, not private kernel implementation.
 - User-facing plugin installation should go through the frontend upload/install flow; default product plugins are auto-installed from `plugin-market/` into the runtime installed-plugin directory.
