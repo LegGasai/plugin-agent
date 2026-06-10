@@ -10,7 +10,7 @@ class SummaryContextCompressorPlugin(PluginBase):
     def invoke(self, capability: str, payload: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         if capability != "context.compressor.compress":
             return super().invoke(capability, payload, context)
-        max_chars = int(self.config.get("max_summary_chars", 1200))
+        max_chars = int(self.config.get("max_summary_chars", 32768))
         parts = []
         for message in payload["messages"]:
             role = message.get("role", "unknown")

@@ -37,8 +37,8 @@ schemas:
           type: integer
           title: Max Summary Chars
           minimum: 100
-          maximum: 20000
-          default: 4000
+          maximum: 65536
+          default: 32768
         system_prompt:
           type: string
           title: System Prompt

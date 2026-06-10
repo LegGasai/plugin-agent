@@ -23,9 +23,9 @@ class ReactAgentLoopPlugin(PluginBase):
             elif event["type"] == "run_failed":
                 failed_payload = event["payload"]
         if final_payload is not None:
-            return {**final_payload, "events": streamed_events}
+            return final_payload
         if failed_payload is not None:
-            return {**failed_payload, "events": streamed_events}
+            return failed_payload
         raise RuntimeError("agent stream ended without a completion event")
 
     def stream(self, capability: str, payload: dict[str, Any], context: dict[str, Any]) -> Iterator[dict[str, Any]]:
@@ -447,10 +447,13 @@ class ReactAgentLoopPlugin(PluginBase):
             "tool_calls": tool_calls,
             "memory": memory,
             "transcript": transcript,
-            "events": list(events),
+            "events": self._persistable_events(events),
             "tool_audit": tool_audit,
             "stop_reason": stop_reason,
         }
+
+    def _persistable_events(self, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [event for event in events if event.get("type") != "model_delta"]
 
     def _normalize_assistant_message(self, message: dict[str, Any], tool_name_to_id: dict[str, str]) -> dict[str, Any]:
         calls = []

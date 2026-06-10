@@ -1,4 +1,4 @@
-max_summary_chars: 4000
+max_summary_chars: 32768
 system_prompt: |
   You are performing a CONTEXT CHECKPOINT COMPACTION.
   Create a compact handoff summary for another model that will resume the task.

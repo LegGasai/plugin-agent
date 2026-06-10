@@ -23,7 +23,7 @@ class ModelContextCompressorPlugin(PluginBase):
             context,
         ).payload
         summary = response["message"].get("content", "").strip()
-        max_chars = int(self.config.get("max_summary_chars", 4000))
+        max_chars = int(self.config.get("max_summary_chars", 32768))
         if len(summary) > max_chars:
             summary = summary[-max_chars:]
         return {"summary": summary, "provider": {"plugin_id": self.id, "instance_id": self.instance_id}}
