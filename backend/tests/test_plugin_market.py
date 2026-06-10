@@ -111,6 +111,70 @@ class CapturingModelPlugin(Plugin):
         return super().invoke(capability, payload, context)
 
 
+class StreamingProbeModelPlugin(Plugin):
+    descriptor = {
+        "id": "model.streaming_probe",
+        "version": "1.0.0",
+        "provides": [
+            {
+                "name": "model.chat",
+                "version": "1.0.0",
+                "input_schema_ref": "schema://model.chat.input.v1",
+                "output_schema_ref": "schema://model.chat.output.v1",
+            },
+            {
+                "name": "model.chat.stream",
+                "version": "1.0.0",
+                "input_schema_ref": "schema://model.chat.input.v1",
+                "output_schema_ref": "schema://model.chat.stream.output.v1",
+            },
+        ],
+    }
+    schemas = [
+        {
+            "schema_ref": "schema://model.chat.input.v1",
+            "json_schema": {
+                "type": "object",
+                "required": ["messages", "tools"],
+                "properties": {
+                    "messages": {"type": "array"},
+                    "tools": {"type": "array"},
+                    "system_prompt": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+        },
+        {
+            "schema_ref": "schema://model.chat.output.v1",
+            "json_schema": {
+                "type": "object",
+                "required": ["message"],
+                "properties": {"message": {"type": "object"}, "raw": {}},
+                "additionalProperties": False,
+            },
+        },
+        {"schema_ref": "schema://model.chat.stream.output.v1", "json_schema": {"type": "object"}},
+    ]
+
+    def __init__(self):
+        super().__init__()
+        self.resumed_after_first_delta = False
+
+    def invoke(self, capability, payload, context):
+        if capability == "model.chat":
+            return {"message": {"role": "assistant", "content": "AB", "tool_calls": []}, "raw": {}}
+        return super().invoke(capability, payload, context)
+
+    def stream(self, capability, payload, context):
+        if capability == "model.chat.stream":
+            yield {"type": "model_delta", "payload": {"delta": "A"}}
+            self.resumed_after_first_delta = True
+            yield {"type": "model_delta", "payload": {"delta": "B"}}
+            yield {"type": "assistant_message", "payload": {"message": {"role": "assistant", "content": "AB", "tool_calls": []}}}
+            return
+        yield from super().stream(capability, payload, context)
+
+
 def write_weather_plugin_package(tmp_path: Path) -> Path:
     source_dir = tmp_path / "weather-source"
     source_dir.mkdir()
@@ -916,6 +980,36 @@ def test_react_v2_injects_skills_and_mcp_tool_context(tmp_path):
     assert {"memory__read", "memory__write"}.issubset(tool_names)
     assert "mcp.local.echo" in prompt_text
     assert events[-1]["type"] == "run_completed"
+
+
+def test_react_v2_forwards_model_stream_deltas_as_they_arrive(tmp_path):
+    from plugin_agent.plugins.memory_file.plugin import FileMemoryPlugin
+    from plugin_agent.plugins.tool_runtime_plugin.plugin import ToolRuntimePlugin
+
+    state = create_app_state(runtime_dir=tmp_path / "runtime")
+    installed = state.assembly.install_market_plugin({"package_id": "agent.loop.react", "version": "2.0.0"})
+    plugin_class = load_installed_plugin_class(installed["installed_path"], installed["plugin_package"]["entrypoint"])
+    model = StreamingProbeModelPlugin()
+    kernel = AgentKernel()
+    kernel.load_plugins([
+        FileMemoryPlugin({"memory_dir": str(tmp_path / "memory")}),
+        model,
+        ToolRuntimePlugin(),
+        plugin_class({"limits": {"max_turns": 1, "compress_after_messages": 99}}),
+    ])
+    kernel.start_all()
+
+    stream = kernel.stream("agent.stream", {"message": "stream please"}, {"agent_id": "agent-test"})
+    first_delta = next(event for event in stream if event["type"] == "model_delta")
+
+    assert first_delta["payload"]["delta"] == "A"
+    assert model.resumed_after_first_delta is False
+
+    remaining_events = list(stream)
+
+    assert model.resumed_after_first_delta is True
+    assert any(event["type"] == "model_delta" and event["payload"]["delta"] == "B" for event in remaining_events)
+    assert remaining_events[-1]["type"] == "run_completed"
 
 
 def test_react_v2_warns_and_continues_when_optional_skill_list_fails(tmp_path):
