@@ -1,0 +1,259 @@
+id: tool.http_request
+version: 0.1.0
+name: HTTP 请求工具
+description: 通过用户配置的 HTTP 端点或显式启用的 Raw 模式发起受限 HTTP 请求。
+categories:
+  - tool
+tags:
+  - 工具
+  - HTTP
+  - 集成
+config_schema_ref: schema://tool.http_request.config.v1
+requires:
+  - capability: tool.invoke
+    version: ">=1.0 <2.0"
+    required: true
+provides:
+  - name: tool.http_endpoint_request
+    version: 1.0.0
+    input_schema_ref: schema://tool.http_endpoint_request.input.v1
+    output_schema_ref: schema://tool.http_request.output.v1
+  - name: tool.http_raw_request
+    version: 1.0.0
+    input_schema_ref: schema://tool.http_raw_request.input.v1
+    output_schema_ref: schema://tool.http_request.output.v1
+resources:
+  - kind: tool
+    id: http.endpoint_request
+    title: HTTP 固定端点请求
+    description: 调用用户预先配置好的 HTTP 端点，适合通知、Webhook 和内部系统集成。
+    invoke_capability: tool.http_endpoint_request
+    schema_refs:
+      input: schema://tool.http_endpoint_request.input.v1
+      output: schema://tool.http_request.output.v1
+  - kind: tool
+    id: http.raw_request
+    title: HTTP Raw 请求
+    description: 在显式启用后按调用参数发起受限 HTTP 请求。
+    invoke_capability: tool.http_raw_request
+    schema_refs:
+      input: schema://tool.http_raw_request.input.v1
+      output: schema://tool.http_request.output.v1
+schemas:
+  - schema_ref: schema://tool.http_request.config.v1
+    json_schema:
+      type: object
+      additionalProperties: false
+      properties:
+        security:
+          type: object
+          additionalProperties: false
+          properties:
+            allow_raw_requests:
+              type: boolean
+              title: 启用 Raw 请求
+              default: false
+            allowed_schemes:
+              type: array
+              title: 允许的协议
+              default: ["https"]
+              items:
+                type: string
+                enum: ["http", "https"]
+            allowed_methods:
+              type: array
+              title: 允许的方法
+              default: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]
+              items:
+                type: string
+                enum: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]
+            allowed_hosts:
+              type: array
+              title: 允许访问的 Host
+              description: 留空表示不允许发起请求。支持精确 host 或 *.example.com。
+              default: []
+              items:
+                type: string
+            allow_private_networks:
+              type: boolean
+              title: 允许访问私网/本机地址
+              default: false
+            allow_redirects:
+              type: boolean
+              title: 允许重定向
+              default: false
+            default_timeout_seconds:
+              type: number
+              title: 默认超时秒数
+              default: 15
+              minimum: 1
+            max_timeout_seconds:
+              type: number
+              title: 最大超时秒数
+              default: 30
+              minimum: 1
+            max_response_bytes:
+              type: integer
+              title: 最大响应字节数
+              default: 65536
+              minimum: 1024
+        default_headers:
+          type: object
+          title: 默认 Header
+          propertyNames:
+            pattern: "^[A-Za-z0-9_-]+$"
+          additionalProperties:
+            type: string
+        default_secret_headers:
+          type: object
+          title: 默认敏感 Header
+          propertyNames:
+            pattern: "^[A-Za-z0-9_-]+$"
+          additionalProperties:
+            type: string
+            x-secret: true
+        endpoints:
+          type: object
+          title: 固定端点
+          propertyNames:
+            pattern: "^[A-Za-z0-9_-]+$"
+          additionalProperties:
+            type: object
+            additionalProperties: false
+            required:
+              - method
+              - url_template
+            properties:
+              title:
+                type: string
+              description:
+                type: string
+              method:
+                type: string
+                enum: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]
+              url_template:
+                type: string
+              query_template:
+                type: object
+                additionalProperties: true
+              headers:
+                type: object
+                propertyNames:
+                  pattern: "^[A-Za-z0-9_-]+$"
+                additionalProperties:
+                  type: string
+              secret_headers:
+                type: object
+                propertyNames:
+                  pattern: "^[A-Za-z0-9_-]+$"
+                additionalProperties:
+                  type: string
+                  x-secret: true
+              body_template:
+                additionalProperties: true
+              allow_extra_headers:
+                type: boolean
+                default: false
+              allowed_extra_header_names:
+                type: array
+                default: []
+                items:
+                  type: string
+              timeout_seconds:
+                type: number
+                minimum: 1
+  - schema_ref: schema://tool.http_endpoint_request.input.v1
+    json_schema:
+      type: object
+      required:
+        - endpoint_id
+      additionalProperties: false
+      properties:
+        endpoint_id:
+          type: string
+          description: 已配置端点的 id。
+        params:
+          type: object
+          additionalProperties: true
+          default: {}
+        query:
+          type: object
+          additionalProperties: true
+          default: {}
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+          default: {}
+        timeout_seconds:
+          type: number
+          minimum: 1
+  - schema_ref: schema://tool.http_raw_request.input.v1
+    json_schema:
+      type: object
+      required:
+        - method
+        - url
+      additionalProperties: false
+      properties:
+        method:
+          type: string
+          enum: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]
+        url:
+          type: string
+        query:
+          type: object
+          additionalProperties: true
+          default: {}
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+          default: {}
+        body_json:
+          additionalProperties: true
+        body_text:
+          type: string
+        timeout_seconds:
+          type: number
+          minimum: 1
+  - schema_ref: schema://tool.http_request.output.v1
+    json_schema:
+      type: object
+      required:
+        - result
+      additionalProperties: false
+      properties:
+        result:
+          type: object
+          required:
+            - ok
+          additionalProperties: false
+          properties:
+            ok:
+              type: boolean
+            endpoint_id:
+              type: string
+            status_code:
+              type:
+                - integer
+                - "null"
+            headers:
+              type: object
+              additionalProperties:
+                type: string
+            body_text:
+              type: string
+            body_json: {}
+            truncated:
+              type: boolean
+            elapsed_ms:
+              type: integer
+            error:
+              type:
+                - object
+                - "null"
+              additionalProperties: true
+runtime:
+  type: python.in_process
+  entrypoint: plugin.py:HttpRequestToolPlugin

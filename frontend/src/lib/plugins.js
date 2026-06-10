@@ -4,6 +4,8 @@ export const DEFAULT_PACKAGES = [
   'model.openai_compatible',
   'tool.runtime',
   'tool.basic',
+  'context.compressor.summary',
+  'context.manager',
   'mcp.bridge',
   'agent.loop.react',
 ];
@@ -17,7 +19,9 @@ export const PACKAGE_CN = {
   'skill.registry': { name: '技能注册表', description: '加载本地 SKILL.md 技能文件，并提供查询能力。' },
   'tool.runtime': { name: '工具运行时', description: '统一发现工具资源、校验参数并路由工具调用。' },
   'tool.basic': { name: '基础工具集', description: '内置 echo、当前时间和数字相加等基础工具。' },
+  'context.manager': { name: '上下文管理器', description: '通过插件能力编排上下文压缩和消息替换。' },
   'context.compressor.summary': { name: '上下文摘要压缩', description: '将较长对话上下文压缩为简短摘要。' },
+  'workspace.sandbox': { name: '代码沙盒', description: '在隔离的代码沙盒内提供文件读写、搜索和沙箱命令执行工具。' },
   'mcp.bridge': { name: 'MCP 桥接器', description: '将 stdio MCP 服务中的工具桥接到智能体工具系统。' },
 };
 
@@ -46,6 +50,11 @@ export function normalizePackage(plugin) {
     runtime: plugin.runtime || { type: 'python.in_process' },
     source: plugin.source || 'builtin',
     installed: Boolean(plugin.installed),
+    installed_version: plugin.installed_version || null,
+    installed_source: plugin.installed_source || null,
+    latest_version: plugin.latest_version || null,
+    has_newer_version: Boolean(plugin.has_newer_version),
+    update_available: Boolean(plugin.update_available),
     market_path: plugin.market_path,
     installed_path: plugin.installed_path,
     categories: uniqueItems(plugin.categories || []),
@@ -83,6 +92,17 @@ export function pluginDisplayTags(pluginPackage) {
   ]);
 }
 
+export function selectDefaultPackageVersions(packages) {
+  const byId = new Map();
+  for (const pluginPackage of packages) {
+    const current = byId.get(pluginPackage.package_id);
+    if (!current || comparePackageDefault(pluginPackage, current) > 0) {
+      byId.set(pluginPackage.package_id, pluginPackage);
+    }
+  }
+  return Array.from(byId.values());
+}
+
 export function stripRedactedSecrets(value) {
   if (Array.isArray(value)) return value.map(stripRedactedSecrets);
   if (!value || typeof value !== 'object') return value;
@@ -91,6 +111,13 @@ export function stripRedactedSecrets(value) {
       .filter(([, item]) => item !== '********')
       .map(([key, item]) => [key, stripRedactedSecrets(item)]),
   );
+}
+
+function comparePackageDefault(left, right) {
+  const versionCompare = String(left.version || '').localeCompare(String(right.version || ''), undefined, { numeric: true });
+  if (versionCompare !== 0) return versionCompare;
+  const sourceRank = (pluginPackage) => (pluginPackage.source === 'installed' ? 1 : 0);
+  return sourceRank(left) - sourceRank(right);
 }
 
 function inferResource(plugin) {

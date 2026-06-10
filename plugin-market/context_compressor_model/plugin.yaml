@@ -1,6 +1,6 @@
 descriptor:
   id: context.compressor.model
-  version: 1.0.0
+  version: 1.1.0
   name: 模型上下文摘要压缩
   description: 调用已绑定模型提供商，将较长对话上下文压缩为续跑摘要。
   categories: [context]
@@ -11,10 +11,10 @@ descriptor:
       version: ">=1.0 <2.0"
       required: true
   provides:
-    - name: context.compress
+    - name: context.compressor.compress
       version: 1.0.0
-      input_schema_ref: schema://context.compress.input.v1
-      output_schema_ref: schema://context.compress.output.v1
+      input_schema_ref: schema://context.compressor.compress.input.v1
+      output_schema_ref: schema://context.compressor.compress.output.v1
 runtime:
   type: python.in_process
   entrypoint: plugin.py:ModelContextCompressorPlugin
@@ -23,10 +23,10 @@ resources:
     id: model-summary
     title: Model Context Compressor
     description: Uses model.chat to compact transcript messages into a handoff summary.
-    invoke_capability: context.compress
+    invoke_capability: context.compressor.compress
     schema_refs:
-      input: schema://context.compress.input.v1
-      output: schema://context.compress.output.v1
+      input: schema://context.compressor.compress.input.v1
+      output: schema://context.compressor.compress.output.v1
 schemas:
   - schema_ref: schema://context.compressor.model.config.v1
     json_schema:
@@ -42,7 +42,7 @@ schemas:
         system_prompt:
           type: string
           title: System Prompt
-  - schema_ref: schema://context.compress.input.v1
+  - schema_ref: schema://context.compressor.compress.input.v1
     json_schema:
       type: object
       required: [messages]
@@ -52,7 +52,7 @@ schemas:
           type: array
           items:
             type: object
-  - schema_ref: schema://context.compress.output.v1
+  - schema_ref: schema://context.compressor.compress.output.v1
     json_schema:
       type: object
       required: [summary]
@@ -60,3 +60,5 @@ schemas:
       properties:
         summary:
           type: string
+        provider:
+          type: object

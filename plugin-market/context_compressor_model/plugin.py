@@ -8,7 +8,7 @@ from plugin_agent_sdk import Plugin as PluginBase
 
 class ModelContextCompressorPlugin(PluginBase):
     def invoke(self, capability: str, payload: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
-        if capability != "context.compress":
+        if capability != "context.compressor.compress":
             return super().invoke(capability, payload, context)
         assert self.kernel is not None
 
@@ -26,7 +26,7 @@ class ModelContextCompressorPlugin(PluginBase):
         max_chars = int(self.config.get("max_summary_chars", 4000))
         if len(summary) > max_chars:
             summary = summary[-max_chars:]
-        return {"summary": summary}
+        return {"summary": summary, "provider": {"plugin_id": self.id, "instance_id": self.instance_id}}
 
     def _format_messages(self, messages: list[dict[str, Any]]) -> str:
         lines = []

@@ -1,0 +1,31 @@
+workspace_root: ""
+sandbox:
+  enabled: true
+  backend: seatbelt
+  network_access: false
+  command_timeout_ms: 30000
+  max_output_bytes: 200000
+  allowed_commands:
+    - "git *"
+    - "rg *"
+    - "uv *"
+    - "pytest *"
+    - "yarn *"
+    - "npm *"
+    - "node *"
+    - "python *"
+    - "python3 *"
+  denied_patterns:
+    - "rm -rf /"
+    - "sudo *"
+    - "chmod -R *"
+    - "chown -R *"
+    - "curl * | sh"
+    - "wget * | sh"
+filesystem:
+  max_file_bytes: 1048576
+  protected_paths:
+    - ".git"
+    - ".plugin-agent"
+    - ".env"
+    - ".env.*"

@@ -1,0 +1,86 @@
+descriptor:
+  id: context.manager
+  version: 1.0.0
+  name: 上下文管理器
+  description: 通过插件能力编排上下文压缩，并把压缩结果转换为可继续推理的消息。
+  categories: [context]
+  tags: [上下文, 压缩编排, 插件编排]
+  config_schema_ref: schema://context.manager.config.v1
+  requires:
+    - capability: context.compressor.compress
+      version: ">=1.0 <2.0"
+      required: true
+  provides:
+    - name: context.compress
+      version: 1.0.0
+      input_schema_ref: schema://context.compress.input.v1
+      output_schema_ref: schema://context.compress.output.v1
+runtime:
+  type: python.in_process
+  entrypoint: plugin.py:ContextManagerPlugin
+resources:
+  - kind: context
+    id: manager
+    title: Context Manager
+    description: Routes context compaction to a compressor plugin and returns replacement messages.
+    invoke_capability: context.compress
+    schema_refs:
+      input: schema://context.compress.input.v1
+      output: schema://context.compress.output.v1
+schemas:
+  - schema_ref: schema://context.manager.config.v1
+    json_schema:
+      type: object
+      additionalProperties: false
+      properties:
+        compression:
+          type: object
+          additionalProperties: false
+          properties:
+            preserve_tail_messages:
+              type: integer
+              title: Preserve Tail Messages
+              minimum: 0
+              maximum: 20
+              default: 1
+            summary_prefix:
+              type: string
+              title: Summary Prefix
+              default: "Conversation summary so far:"
+  - schema_ref: schema://context.compress.input.v1
+    json_schema:
+      type: object
+      required: [messages]
+      additionalProperties: false
+      properties:
+        messages:
+          type: array
+          items:
+            type: object
+        model_messages:
+          type: array
+          items:
+            type: object
+        preserve_tail_messages:
+          type: integer
+          minimum: 0
+  - schema_ref: schema://context.compress.output.v1
+    json_schema:
+      type: object
+      required: [summary, messages, model_messages, provider_capability]
+      additionalProperties: false
+      properties:
+        summary:
+          type: string
+        messages:
+          type: array
+          items:
+            type: object
+        model_messages:
+          type: array
+          items:
+            type: object
+        provider_capability:
+          type: string
+        provider:
+          type: object

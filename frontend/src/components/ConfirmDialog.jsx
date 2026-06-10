@@ -1,4 +1,4 @@
-import { AlertTriangle, X } from 'lucide-react';
+import { AlertTriangle, Info, X } from 'lucide-react';
 
 export function ConfirmDialog({
   open,
@@ -11,15 +11,16 @@ export function ConfirmDialog({
   onCancel,
 }) {
   if (!open) return null;
+  const Icon = tone === 'info' ? Info : AlertTriangle;
 
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={onCancel}>
-      <section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-dialog-title" onMouseDown={(event) => event.stopPropagation()}>
+      <section className={`confirm-dialog ${tone}`} role="dialog" aria-modal="true" aria-labelledby="confirm-dialog-title" onMouseDown={(event) => event.stopPropagation()}>
         <button className="dialog-close-button" onClick={onCancel} aria-label="关闭弹窗">
           <X size={16} />
         </button>
         <div className={`dialog-icon ${tone}`}>
-          <AlertTriangle size={20} />
+          <Icon size={20} />
         </div>
         <div className="dialog-copy">
           <h2 id="confirm-dialog-title">{title}</h2>

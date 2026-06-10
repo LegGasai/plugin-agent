@@ -1,12 +1,17 @@
 import json
+import platform
+import shutil
 import urllib.request
 import zipfile
 from pathlib import Path
 
+import pytest
+
+from plugin_agent.kernel import KernelInvokeError
 from plugin_agent.kernel import AgentKernel
 from plugin_agent.http_service import PluginAgentHTTPServer, create_app_state
 from plugin_agent.plugin_store import load_installed_plugin_class
-from plugin_agent_sdk import Plugin
+from plugin_agent_sdk import Plugin, PluginPackage
 
 
 def request_json(base_url, method, path, payload=None):
@@ -349,15 +354,6 @@ def test_agent_instances_pin_installed_plugin_versions(tmp_path):
         request_json(base, "POST", "/api/marketplace/upload", {"path": str(first_package)})
         request_json(base, "POST", "/api/marketplace/upload", {"path": str(second_package)})
         request_json(base, "POST", "/api/marketplace/install", {"package_id": "tool.versioned", "version": "0.1.0"})
-        request_json(base, "POST", "/api/marketplace/install", {"package_id": "tool.versioned", "version": "0.2.0"})
-
-        installed_packages = request_json(base, "GET", "/api/installed-plugin-packages")["plugin_packages"]
-        installed_versions = {
-            package["version"]
-            for package in installed_packages
-            if package["package_id"] == "tool.versioned" and package["source"] == "installed"
-        }
-        assert installed_versions == {"0.1.0", "0.2.0"}
 
         created = request_json(
             base,
@@ -374,12 +370,110 @@ def test_agent_instances_pin_installed_plugin_versions(tmp_path):
         versioned_instance = next(instance for instance in created["plugin_instances"] if instance["package_id"] == "tool.versioned")
         assert versioned_instance["package_version"] == "0.1.0"
 
+        request_json(base, "POST", "/api/marketplace/install", {"package_id": "tool.versioned", "version": "0.2.0"})
+        installed_packages = request_json(base, "GET", "/api/installed-plugin-packages")["plugin_packages"]
+        installed_versions = [
+            package["version"]
+            for package in installed_packages
+            if package["package_id"] == "tool.versioned" and package["source"] == "installed"
+        ]
+        assert installed_versions == ["0.2.0"]
+        assert state.assembly.store.get_package("tool.versioned", "0.1.0")["source"] == "installed"
+
         kernel = state.assembly.build_kernel_for_agent(created["id"])
         result = kernel.invoke("tool.invoke", {"tool_id": "versioned.answer", "arguments": {}}).payload
 
         assert result["result"] == "answer-from-0.1.0"
     finally:
         server.stop()
+
+
+def test_installing_new_plugin_version_replaces_unused_installed_version(tmp_path):
+    state = create_app_state(runtime_dir=tmp_path / "runtime", market_dir=tmp_path / "plugin-market")
+    first_package = write_versioned_tool_package(tmp_path, "0.1.0", "answer-from-0.1.0")
+    second_package = write_versioned_tool_package(tmp_path, "0.2.0", "answer-from-0.2.0")
+    state.assembly.reserve_upload({"path": str(first_package)})
+    state.assembly.reserve_upload({"path": str(second_package)})
+
+    first = state.assembly.install_market_plugin({"package_id": "tool.versioned", "version": "0.1.0"})
+    assert Path(first["installed_path"]).exists()
+    state.assembly.install_market_plugin({"package_id": "tool.versioned", "version": "0.2.0"})
+
+    installed_versions = [
+        package["version"]
+        for package in state.assembly.list_installed_plugin_packages()
+        if package["package_id"] == "tool.versioned" and package["source"] == "installed"
+    ]
+    assert installed_versions == ["0.2.0"]
+    assert not Path(first["installed_path"]).exists()
+    try:
+        state.assembly.store.get_package("tool.versioned", "0.1.0")
+    except KeyError:
+        pass
+    else:
+        raise AssertionError("unused old installed plugin version should be removed")
+
+
+def test_marketplace_marks_active_installed_version_and_newer_available(tmp_path):
+    state = create_app_state(runtime_dir=tmp_path / "runtime", market_dir=tmp_path / "plugin-market")
+    state.assembly.reserve_upload({"path": str(write_versioned_tool_package(tmp_path, "0.1.0", "answer-from-0.1.0"))})
+    state.assembly.reserve_upload({"path": str(write_versioned_tool_package(tmp_path, "0.2.0", "answer-from-0.2.0"))})
+    state.assembly.install_market_plugin({"package_id": "tool.versioned", "version": "0.1.0"})
+
+    market = [
+        package for package in state.assembly.marketplace()["market_plugin_packages"]
+        if package["package_id"] == "tool.versioned"
+    ]
+    by_version = {package["version"]: package for package in market}
+
+    assert set(by_version) == {"0.1.0", "0.2.0"}
+    assert by_version["0.1.0"]["installed"] is True
+    assert by_version["0.1.0"]["installed_version"] == "0.1.0"
+    assert by_version["0.1.0"]["installed_source"] == "installed"
+    assert by_version["0.1.0"]["latest_version"] == "0.2.0"
+    assert by_version["0.1.0"]["has_newer_version"] is True
+    assert by_version["0.1.0"]["update_available"] is True
+    assert by_version["0.2.0"]["installed"] is False
+    assert by_version["0.2.0"]["installed_version"] == "0.1.0"
+    assert by_version["0.2.0"]["installed_source"] == "installed"
+    assert by_version["0.2.0"]["latest_version"] == "0.2.0"
+    assert by_version["0.2.0"]["has_newer_version"] is False
+    assert by_version["0.2.0"]["update_available"] is True
+
+
+def test_marketplace_marks_active_builtin_latest_version_as_installed(tmp_path):
+    state = create_app_state(runtime_dir=tmp_path / "runtime")
+
+    market_package = next(
+        package for package in state.assembly.marketplace()["market_plugin_packages"]
+        if package["package_id"] == "context.compressor.summary" and package["version"] == "1.1.0"
+    )
+
+    assert market_package["installed"] is True
+    assert market_package["installed_version"] == "1.1.0"
+    assert market_package["installed_source"] == "builtin"
+    assert market_package["latest_version"] == "1.1.0"
+    assert market_package["has_newer_version"] is False
+    assert market_package["update_available"] is False
+
+
+def test_default_package_selection_prefers_newer_builtin_over_older_installed(tmp_path):
+    state = create_app_state(runtime_dir=tmp_path / "runtime")
+    builtin_package = state.assembly.store.get_package("context.compressor.summary", "1.1.0")
+    state.assembly.store.delete_package("context.compressor.summary", "1.1.0")
+    old_package = {
+        **builtin_package,
+        "version": "1.0.0",
+        "source": "installed",
+        "installed_path": str(tmp_path / "old-installed-context-compressor"),
+    }
+    state.assembly.store.upsert_package(PluginPackage.model_validate(old_package))
+    state.assembly.refresh_plugin_packages()
+
+    selected = state.assembly.store.get_package("context.compressor.summary")
+
+    assert selected["source"] == "builtin"
+    assert selected["version"] == "1.1.0"
 
 
 def test_installed_plugin_can_import_sibling_python_modules(tmp_path):
@@ -618,6 +712,8 @@ def test_project_market_plugins_expose_latest_runtime_contracts(tmp_path):
         "skill.registry",
         "tool.basic",
         "tool.runtime",
+        "context.manager",
+        "workspace.sandbox",
         "context.compressor.summary",
         "context.compressor.model",
     ]:
@@ -628,7 +724,159 @@ def test_project_market_plugins_expose_latest_runtime_contracts(tmp_path):
     assert "model.chat.stream" in {cap["name"] for cap in market["model.openai_compatible"]["provides"]}
     assert "model.chat.stream" in {cap["name"] for cap in market["model.openrouter"]["provides"]}
     assert "model.chat.stream" in {cap["name"] for cap in market["model.deepseek"]["provides"]}
+    assert {cap["name"] for cap in market["context.manager"]["provides"]} == {"context.compress"}
+    assert any(dep["capability"] == "context.compressor.compress" for dep in market["context.manager"]["requires"])
     assert any(dep["capability"] == "model.chat" for dep in market["context.compressor.model"]["requires"])
+    assert {cap["name"] for cap in market["context.compressor.model"]["provides"]} == {"context.compressor.compress"}
+    assert {cap["name"] for cap in market["workspace.sandbox"]["provides"]} == {
+        "workspace.ls",
+        "workspace.read",
+        "workspace.write",
+        "workspace.edit",
+        "workspace.grep",
+        "workspace.glob",
+        "workspace.bash",
+    }
+
+
+def test_workspace_sandbox_tools_are_invoked_through_tool_runtime(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "README.md").write_text("hello sandbox\nsecond line\n")
+    (workspace / "src").mkdir()
+    (workspace / "src" / "app.py").write_text("print('hello')\n")
+    (workspace / ".env").write_text("SECRET=1\n")
+    state = create_app_state(runtime_dir=tmp_path / "runtime")
+    state.assembly.install_market_plugin({"package_id": "workspace.sandbox"})
+    kernel = state.assembly.build_kernel(
+        ["tool.runtime", "workspace.sandbox"],
+        {
+            "workspace.sandbox": {
+                "workspace_root": str(workspace),
+                "sandbox": {"enabled": False, "allowed_commands": ["python *"]},
+            }
+        },
+    )
+
+    def invoke(tool_id, arguments):
+        return kernel.invoke("tool.invoke", {"tool_id": tool_id, "arguments": arguments}).payload["result"]
+
+    listed = invoke("workspace.ls", {"path": ".", "recursive": True})
+    assert listed["ok"] is True
+    assert "README.md" in listed["entries"]
+    assert ".env" not in listed["entries"]
+
+    read = invoke("workspace.read", {"path": "README.md", "limit": 1})
+    assert read["ok"] is True
+    assert read["content"] == "1: hello sandbox"
+
+    written = invoke("workspace.write", {"path": "notes/todo.txt", "content": "ship it\n"})
+    assert written["ok"] is True
+    assert (workspace / "notes" / "todo.txt").read_text() == "ship it\n"
+
+    edited = invoke(
+        "workspace.edit",
+        {"file_path": "README.md", "old_string": "hello sandbox", "new_string": "hello workspace"},
+    )
+    assert edited["ok"] is True
+    assert (workspace / "README.md").read_text().startswith("hello workspace")
+
+    grep = invoke("workspace.grep", {"pattern": "hello", "path": ".", "include": "*.md"})
+    assert grep["ok"] is True
+    assert any(match["path"] == "README.md" for match in grep["matches"])
+
+    glob = invoke("workspace.glob", {"pattern": "**/*.py"})
+    assert glob["ok"] is True
+    assert glob["matches"] == ["src/app.py"]
+
+    bash = invoke("workspace.bash", {"command": "python -c 'print(123)'"})
+    assert bash["ok"] is True
+    assert bash["exit_code"] == 0
+    assert bash["stdout"].strip() == "123"
+
+
+def test_workspace_sandbox_rejects_path_escape_and_protected_writes(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside")
+    (workspace / ".git").mkdir()
+    state = create_app_state(runtime_dir=tmp_path / "runtime")
+    state.assembly.install_market_plugin({"package_id": "workspace.sandbox"})
+    kernel = state.assembly.build_kernel(
+        ["tool.runtime", "workspace.sandbox"],
+        {"workspace.sandbox": {"workspace_root": str(workspace), "sandbox": {"enabled": False}}},
+    )
+
+    with pytest.raises(KernelInvokeError, match="outside workspace"):
+        kernel.invoke("tool.invoke", {"tool_id": "workspace.read", "arguments": {"path": "../outside.txt"}})
+
+    with pytest.raises(KernelInvokeError, match="protected path"):
+        kernel.invoke("tool.invoke", {"tool_id": "workspace.write", "arguments": {"path": ".git/config", "content": "bad"}})
+
+
+def test_workspace_sandbox_bash_policy_and_timeout(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    state = create_app_state(runtime_dir=tmp_path / "runtime")
+    state.assembly.install_market_plugin({"package_id": "workspace.sandbox"})
+    kernel = state.assembly.build_kernel(
+        ["tool.runtime", "workspace.sandbox"],
+        {
+            "workspace.sandbox": {
+                "workspace_root": str(workspace),
+                "sandbox": {
+                    "enabled": False,
+                    "allowed_commands": ["python *"],
+                    "denied_patterns": ["python *forbidden*"],
+                    "command_timeout_ms": 200,
+                },
+            }
+        },
+    )
+
+    with pytest.raises(KernelInvokeError, match="not allowed"):
+        kernel.invoke("tool.invoke", {"tool_id": "workspace.bash", "arguments": {"command": "echo nope"}})
+
+    with pytest.raises(KernelInvokeError, match="denied"):
+        kernel.invoke("tool.invoke", {"tool_id": "workspace.bash", "arguments": {"command": "python -c 'print(\"forbidden\")'"}})
+
+    result = kernel.invoke(
+        "tool.invoke",
+        {"tool_id": "workspace.bash", "arguments": {"command": "python -c 'import time; time.sleep(1)'", "timeout_ms": 100}},
+    ).payload["result"]
+    assert result["timed_out"] is True
+    assert result["exit_code"] is None
+
+
+@pytest.mark.skipif(platform.system() != "Darwin" or not shutil.which("sandbox-exec"), reason="macOS sandbox-exec only")
+def test_workspace_sandbox_seatbelt_blocks_writes_outside_workspace(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside.txt"
+    state = create_app_state(runtime_dir=tmp_path / "runtime")
+    state.assembly.install_market_plugin({"package_id": "workspace.sandbox"})
+    kernel = state.assembly.build_kernel(
+        ["tool.runtime", "workspace.sandbox"],
+        {
+            "workspace.sandbox": {
+                "workspace_root": str(workspace),
+                "sandbox": {"enabled": True, "allowed_commands": ["python *"], "network_access": False},
+            }
+        },
+    )
+
+    result = kernel.invoke(
+        "tool.invoke",
+        {
+            "tool_id": "workspace.bash",
+            "arguments": {"command": f"python -c 'from pathlib import Path; Path({str(outside)!r}).write_text(\"bad\")'"},
+        },
+    ).payload["result"]
+
+    assert result["sandbox_backend"] == "seatbelt"
+    assert result["exit_code"] != 0
+    assert not outside.exists()
 
 
 def test_model_context_compressor_uses_model_chat_provider_from_market_plugin(tmp_path):
@@ -642,7 +890,7 @@ def test_model_context_compressor_uses_model_chat_provider_from_market_plugin(tm
     kernel.start_all()
 
     result = kernel.invoke(
-        "context.compress",
+        "context.compressor.compress",
         {
             "messages": [
                 {"role": "user", "content": "第一轮问题"},

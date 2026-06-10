@@ -16,7 +16,7 @@ export function PluginConfigPanel({ instance, pluginPackage, onSave, onRestart }
 
   const primaryKind = useMemo(() => pluginPackage?.resources?.[0]?.kind || 'extension', [pluginPackage]);
   const configSchema = useMemo(() => findConfigSchema(pluginPackage), [pluginPackage]);
-  const version = pluginPackage?.version || instance.version || '1.0.0';
+  const version = instance.package_version || instance.version || pluginPackage?.version || '1.0.0';
 
   function save() {
     if (Object.keys(fieldErrors).length) {

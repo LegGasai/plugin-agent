@@ -101,7 +101,8 @@ def test_marketplace_exposes_market_plugins_and_upload_capability(tmp_path):
         assert any(package["package_id"] == "context.compressor.summary" for package in marketplace["plugin_packages"])
         assert all(package["source"] == "market" for package in marketplace["plugin_packages"])
         installed = request_json(base, "GET", "/api/installed-plugin-packages")["plugin_packages"]
-        assert not any(package["package_id"] == "context.compressor.summary" for package in installed)
+        assert any(package["package_id"] == "context.compressor.summary" for package in installed)
+        assert any(package["package_id"] == "context.manager" for package in installed)
         assert marketplace["upload"]["available"] is True
         assert marketplace["upload"]["implemented"] is True
         assert marketplace["market_dir"]

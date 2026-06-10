@@ -11,18 +11,18 @@ Use this reference when designing plugin contracts, manifests, lifecycle behavio
 - Built-in registration and product model: `backend/src/plugin_agent/assembly.py`
 - Tests: `backend/tests/test_sdk.py`, `test_builtin_plugins.py`, `test_real_plugins.py`, `test_kernel.py`, `test_product_model.py`
 
-## Marketplace Plugin Layout
+## Uploadable Plugin Layout
 
-Use this for new product plugins:
+Use this for new product plugins before uploading through the frontend marketplace flow:
 
 ```text
-plugin-market/<plugin_folder>/
+<plugin_folder>/
 ├── config.yaml
 ├── plugin.yaml
 └── plugin.py
 ```
 
-`plugin.yaml` must include `runtime.type: python.in_process` and `runtime.entrypoint: plugin.py:<PluginClass>` so upload/install validation can load it. Do not write plugin source directly into `.plugin-agent/installed-plugins/`; install from the marketplace source instead.
+`plugin.yaml` must include `runtime.type: python.in_process` and `runtime.entrypoint: plugin.py:<PluginClass>` so upload/install validation can load it. Do not write plugin source directly into `.plugin-agent/installed-plugins/`; use the marketplace upload/install flow instead. `plugin-market/` is the local development storage behind that flow, not a user-facing destination.
 
 ## Built-in Plugin Layout
 
@@ -142,10 +142,11 @@ The assembly service collects encrypted paths from the schema, stores secret ref
 
 For a new marketplace plugin:
 
-1. Add a folder under `plugin-market/`.
+1. Prepare an uploadable plugin folder or `.pluginpkg` artifact.
 2. Implement runtime code using `plugin_agent_sdk.Plugin`.
 3. Add `plugin.yaml`, `config.yaml`, schemas, resources, and runtime entrypoint.
-4. Add marketplace tests that confirm it appears in `GET /api/marketplace/plugins` and not in `GET /api/installed-plugin-packages` until installed.
+4. Upload/install through the marketplace flow or API in tests.
+5. Add marketplace tests that confirm it appears in `GET /api/marketplace/plugins` and not in `GET /api/installed-plugin-packages` until installed.
 
 For a new built-in plugin:
 

@@ -11,7 +11,9 @@ This subrepo contains the Python backend:
 - Local marketplace plugin packages in `../plugin-market/`.
 - Built-in compatibility implementations in `src/plugin_agent/plugins/`.
 - External installed plugins in `.plugin-agent/installed-plugins/` at runtime.
-- Sample external upload fixture in `../test-plugin/`.
+- Sample external upload fixture in `../example-plugin/`.
+- HTTP tool marketplace package in `../plugin-market/http-tool-plugin/`.
+- Workspace sandbox coding package in `../plugin-market/workspace_sandbox/`.
 - Tests in `tests/`.
 
 ## Kernel and SDK Boundary
@@ -37,11 +39,11 @@ Compatibility shims may remain, but new public contracts belong in `plugin_agent
 
 Keep these locations distinct:
 
-- `plugin-market/`: local development stand-in for a remote marketplace; new user-facing/product plugins live here as unpacked directories, and uploaded `.pluginpkg` artifacts are stored there and ignored by git.
+- `plugin-market/`: local development stand-in for a remote marketplace and internal storage behind the frontend upload/install flow.
 - `src/plugin_agent/plugins/`: compatibility/built-in runtime implementations used while the platform is transitioning fully to installed plugin loading.
 - `.plugin-agent/installed-plugins/`: runtime installation directory for unpacked external plugins, stored by `package_id/version`.
 
-Do not place new plugin source directly under `.plugin-agent/installed-plugins/`; install it from `plugin-market/` so marketplace and installed state stay synchronized.
+Do not place new plugin source directly under `.plugin-agent/installed-plugins/`; install it through the marketplace upload/install flow so marketplace and installed state stay synchronized.
 
 Keep the HTTP views distinct as well:
 
@@ -52,9 +54,9 @@ Keep the HTTP views distinct as well:
 
 External plugin packages use `.pluginpkg` zip files with a required `plugin.yaml`. Initial runtime support is `python.in_process` with an entrypoint like `plugin.py:WeatherPlugin`. External plugin classes must import and extend `plugin_agent_sdk.Plugin`. Entry modules may import sibling Python modules from the same plugin package.
 
-Installed external packages take precedence over built-in compatibility implementations when they share the same `package_id`. Multiple installed versions can coexist, and saved Agent plugin instances must pin `package_version` so later installs do not silently change runtime behavior. This is intentional: `plugin-market/` is the product source of truth for plugin evolution, and `src/plugin_agent/plugins/` is the host fallback while the platform transitions.
+Default package selection chooses the newest available version for a `package_id`; installed external packages take precedence over built-in compatibility implementations only when they share the same `package_id` and version. The installed-package view exposes one active version per `package_id`. Older installed versions may remain only when saved Agent plugin instances still pin that `package_version`; do not surface those retained versions as separately installed plugins. This is intentional: `plugin-market/` is the product source of truth for plugin evolution, and `src/plugin_agent/plugins/` is the host fallback while the platform transitions.
 
-Use `../test-plugin/` for local upload/install smoke checks when a full marketplace package is not needed.
+Use `../example-plugin/` for local upload/install smoke checks when a full plugin package fixture is not needed. Use `../plugin-market/http-tool-plugin/` when testing configured tool integrations, dynamic secret header config, or endpoint/raw HTTP request behavior.
 
 ## Plugin Communication
 
@@ -84,6 +86,8 @@ When multiple plugin instances provide the same capability in one Agent, do not 
 
 When adding plugin-to-plugin calls, handle `KernelInvokeError`-style structured failures where appropriate. Required dependencies should be blocked during startup; optional dependencies should degrade gracefully if invoke fails.
 
+Context rewriting must remain plugin-composed. Agent Loop plugins should call `context.compress` when available; `context.manager` owns message replacement and delegates summarization to a selected `context.compressor.compress` provider. Compressor plugins must not also provide `context.compress` unless they intentionally replace the context manager in an Agent with explicit capability bindings.
+
 ## Product Model
 
 Preserve these distinctions:
@@ -102,7 +106,7 @@ Sessions are product/runtime state, not plugin-owned state. The host stores sess
 
 ## Adding Plugins
 
-For new product plugins, add an unpacked package under `../plugin-market/` with `plugin.yaml`, `config.yaml`, and `plugin.py`. Include `runtime.type: python.in_process` and `runtime.entrypoint: plugin.py:<PluginClass>`.
+For new product plugins, prepare an uploadable package directory with `plugin.yaml`, optional `config.yaml`, and an entrypoint such as `plugin.py`, then install it through the frontend marketplace upload flow. Include `runtime.type: python.in_process` and `runtime.entrypoint: plugin.py:<PluginClass>`. Larger plugins may include sibling modules or internal packages; keep `plugin.py` as a thin entrypoint when the implementation grows.
 
 Marketplace plugin runtime code must depend on `plugin_agent_sdk` and standard/library dependencies only; do not import from private `plugin_agent.*` modules. If a marketplace plugin needs shared logic, duplicate the small adapter locally for now or move the shared surface into the public SDK.
 
@@ -112,6 +116,8 @@ Model providers must normalize provider-specific responses into the standard `mo
 
 Agent Loop plugins should enforce their own operation timeouts for tool calls. MCP bridge plugins must apply configured request timeouts to subprocess protocol reads and close subprocesses on startup failure.
 
+Code sandbox and coding capabilities should remain ordinary marketplace plugins. `workspace.sandbox` is the current reference package: it exposes file and command tools through `tool.runtime`, requires an explicit `workspace_root`, keeps file operations inside that root, and wraps macOS command execution with Seatbelt when sandboxing is enabled. Do not move this behavior into the kernel or broaden workspace access without schema changes and tests for path escape, protected paths, command policy, timeouts, and sandbox behavior.
+
 ## Secrets
 
 Plugin config secrecy is declared by the plugin config JSON Schema, not guessed from field names.
@@ -119,6 +125,12 @@ Plugin config secrecy is declared by the plugin config JSON Schema, not guessed 
 Use `x-secret: true` or `x-encrypted: true` on config schema properties that must be treated as secret values. HTTP responses must redact those fields, and backend config updates must treat the redaction sentinel `"********"` as “keep the existing value”. The current development store keeps local secret refs out of ordinary config JSON, but it is not a production-grade KMS/keyring-backed secret manager yet.
 
 Do not add model-provider environment variables as the product configuration path. Model API keys, model names, base URLs, and similar fields belong to `PluginInstance.config`.
+
+## Logging
+
+Use `plugin_agent.logging_config.configure_logging()` only from process entrypoints such as the CLI server or a future local desktop app host. Do not call `logging.basicConfig()` from importable modules.
+
+Backend logs should be useful for local diagnosis without leaking data. Log lifecycle events, package IDs, plugin instance IDs, agent/session IDs, runtime status, diagnostic codes, request paths, and exception traces. Do not log secrets, redacted secret placeholders, full chat messages, model outputs, uploaded package contents, or workspace file contents.
 
 ## Verification
 

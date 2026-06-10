@@ -58,7 +58,7 @@ Use `src/lib/api.js` for backend calls. Keep raw fetch calls out of components u
 
 Agent chat sessions are loaded and mutated through `src/lib/api.js` helpers for `/api/agents/{agent_id}/sessions` and `/api/sessions/{session_id}/messages`. Components should not keep a separate persistence model for conversation history.
 
-Plugin market tabs should keep installed and marketplace package sources distinct: installed/built-in packages come from `/api/installed-plugin-packages`, marketplace packages from `/api/marketplace/plugins`, installation from `/api/marketplace/install`, and uninstall from `DELETE /api/installed-plugin-packages/{package_id}`.
+Plugin market tabs should keep installed and marketplace package sources distinct: installed/built-in packages come from `/api/installed-plugin-packages`, marketplace packages from `/api/marketplace/plugins`, installation from `/api/marketplace/install`, and uninstall from `DELETE /api/installed-plugin-packages/{package_id}`. The installed tab should render one active version per `package_id`; the marketplace tab may render multiple versions and should surface `installed_version`, `latest_version`, and `has_newer_version` when present.
 
 Use `src/lib/plugins.js` for plugin labels, resource kind labels, redaction helpers, and package normalization.
 
