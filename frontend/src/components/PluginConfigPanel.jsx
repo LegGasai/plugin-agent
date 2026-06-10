@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Bot, Boxes, ChevronDown, ChevronRight, Database, LockKeyhole, Plug, RotateCw, Save } from 'lucide-react';
+import { AlertTriangle, Bot, Boxes, ChevronDown, ChevronRight, Database, LockKeyhole, Plug, RotateCw, Save } from 'lucide-react';
 import { resourceLabel } from '../lib/plugins.js';
 
-export function PluginConfigPanel({ instance, pluginPackage, onSave, onRestart }) {
+export function PluginConfigPanel({ instance, pluginPackage, diagnostics = [], onSave, onRestart }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(cloneConfig(instance.config || {}));
   const [error, setError] = useState('');
@@ -17,6 +17,10 @@ export function PluginConfigPanel({ instance, pluginPackage, onSave, onRestart }
   const primaryKind = useMemo(() => pluginPackage?.resources?.[0]?.kind || 'extension', [pluginPackage]);
   const configSchema = useMemo(() => findConfigSchema(pluginPackage), [pluginPackage]);
   const version = instance.package_version || instance.version || pluginPackage?.version || '1.0.0';
+  const attentionDiagnostics = diagnostics.filter((diagnostic) => diagnostic.severity !== 'warning');
+  const hasAttention = attentionDiagnostics.length > 0;
+  const attentionLabel = hasAttention && attentionDiagnostics.some(isMissingConfigDiagnostic) ? '需配置' : '需处理';
+  const attentionText = hasAttention ? readableDiagnostic(attentionDiagnostics[0]) : '';
 
   function save() {
     if (Object.keys(fieldErrors).length) {
@@ -45,7 +49,7 @@ export function PluginConfigPanel({ instance, pluginPackage, onSave, onRestart }
   }
 
   return (
-    <article className={open ? 'plugin-card open' : 'plugin-card'}>
+    <article className={['plugin-card', open ? 'open' : '', hasAttention ? 'needs-attention' : ''].filter(Boolean).join(' ')}>
       <button className="plugin-card-head" onClick={() => setOpen((value) => !value)}>
         {open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
         <InstanceKindIcon kind={primaryKind} />
@@ -53,9 +57,21 @@ export function PluginConfigPanel({ instance, pluginPackage, onSave, onRestart }
           <strong>{instance.display_name}</strong>
           <small>{instance.package_id} · v{version}</small>
         </span>
+        {hasAttention && (
+          <em className="plugin-attention-badge" title={attentionText}>
+            <AlertTriangle size={12} />
+            {attentionLabel}
+          </em>
+        )}
       </button>
       {open && (
         <div className="plugin-card-body">
+          {hasAttention && (
+            <div className="plugin-attention-note">
+              <AlertTriangle size={14} />
+              <span>{attentionText}</span>
+            </div>
+          )}
           <p>{pluginPackage?.description || '暂无插件描述'}</p>
           <div className="tag-list">
             {(pluginPackage?.resources || []).map((resource) => <span key={`${resource.kind}-${resource.id}`}>{resourceLabel(resource.kind)}</span>)}
@@ -78,6 +94,18 @@ export function PluginConfigPanel({ instance, pluginPackage, onSave, onRestart }
       )}
     </article>
   );
+}
+
+function isMissingConfigDiagnostic(diagnostic) {
+  const text = `${diagnostic.code || ''} ${diagnostic.message || ''}`.toLowerCase();
+  return text.includes('required') || text.includes('missing required config') || text.includes('缺少') || text.includes('必填');
+}
+
+function readableDiagnostic(diagnostic) {
+  if (!diagnostic) return '';
+  if (isMissingConfigDiagnostic(diagnostic)) return '插件缺少必要配置，请展开后补全配置并保存。';
+  if (diagnostic.code === 'plugin_start_failed') return '插件启动失败，请检查配置后保存并重启。';
+  return diagnostic.message || '插件检测未通过，请检查配置。';
 }
 
 function ConfigForm({ schema, value, onChange, onComplexChange, fieldErrors }) {

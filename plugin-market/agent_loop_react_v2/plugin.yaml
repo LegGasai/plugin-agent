@@ -1,0 +1,227 @@
+descriptor:
+  id: agent.loop.react
+  version: 2.0.0
+  name: ReAct 智能体循环 v2
+  description: 基于模型推理、工具发现、Skills 注入和 MCP 工具接入运行智能体对话。
+  categories:
+  - agent_loop
+  tags:
+  - 智能体
+  - 推理
+  - 工具调用
+  - Skills
+  - MCP
+  config_schema_ref: schema://agent.loop.react.config.v2
+  requires:
+  - capability: model.chat
+    version: '>=1.0 <2.0'
+    required: true
+  - capability: memory.query
+    version: '>=1.0 <2.0'
+    required: true
+  - capability: memory.write
+    version: '>=1.0 <2.0'
+    required: true
+  - capability: tool.registry.list
+    version: '>=1.0 <2.0'
+    required: true
+  - capability: tool.invoke
+    version: '>=1.0 <2.0'
+    required: true
+  - capability: skill.list
+    version: '>=1.0 <2.0'
+    required: false
+  - capability: skill.activate
+    version: '>=1.0 <2.0'
+    required: false
+  - capability: skill.read_file
+    version: '>=1.0 <2.0'
+    required: false
+  - capability: mcp.tools.list
+    version: '>=1.0 <2.0'
+    required: false
+  provides:
+  - name: agent.run
+    version: 1.0.0
+    input_schema_ref: schema://agent.run.input.v1
+    output_schema_ref: schema://agent.run.output.v1
+  - name: agent.stream
+    version: 1.0.0
+    input_schema_ref: schema://agent.run.input.v1
+    output_schema_ref: schema://agent.stream.event.v2
+resources:
+- kind: agent_loop
+  id: react
+  title: ReAct Loop v2
+  description: Runs a model-driven ReAct loop with optional Skills and MCP tool context.
+  invoke_capability: agent.run
+  schema_refs:
+    input: schema://agent.run.input.v1
+    output: schema://agent.run.output.v1
+    stream_output: schema://agent.stream.event.v2
+schemas:
+- schema_ref: schema://agent.loop.react.config.v2
+  json_schema:
+    type: object
+    additionalProperties: false
+    properties:
+      system_prompt:
+        type: string
+        title: System Prompt
+      limits:
+        type: object
+        additionalProperties: false
+        properties:
+          max_turns:
+            type: integer
+            title: Max Turns
+            minimum: 1
+            maximum: 50
+            default: 8
+          tool_timeout_ms:
+            type: integer
+            title: Tool Timeout Ms
+            minimum: 100
+            default: 3000
+          compress_after_messages:
+            type: integer
+            title: Compress After Messages
+            minimum: 1
+            default: 20
+      skills:
+        type: object
+        title: Skills
+        additionalProperties: false
+        properties:
+          enabled:
+            type: boolean
+            title: Enabled
+            default: true
+          failure_policy:
+            type: string
+            title: Failure Policy
+            enum:
+            - ignore
+            - warn
+            - fail_run
+            default: warn
+      tools:
+        type: object
+        title: Tools
+        additionalProperties: false
+        properties:
+          include_prompt:
+            type: boolean
+            title: Include Tool Prompt
+            default: true
+          max_prompt_tools:
+            type: integer
+            title: Max Prompt Tools
+            minimum: 0
+            maximum: 100
+            default: 30
+          failure_policy:
+            type: string
+            title: Tool Failure Policy
+            enum:
+            - observe
+            - fail_run
+            default: observe
+      mcp:
+        type: object
+        title: MCP
+        additionalProperties: false
+        properties:
+          enabled:
+            type: boolean
+            title: Enabled
+            default: true
+          include_catalog_in_prompt:
+            type: boolean
+            title: Include Catalog In Prompt
+            default: true
+- schema_ref: schema://agent.run.input.v1
+  json_schema:
+    type: object
+    required:
+    - message
+    additionalProperties: false
+    properties:
+      message:
+        type: string
+- schema_ref: schema://agent.run.output.v1
+  json_schema:
+    type: object
+    required:
+    - answer
+    - tool_calls
+    - memory
+    - transcript
+    - events
+    - tool_audit
+    - stop_reason
+    additionalProperties: false
+    properties:
+      answer:
+        type: string
+      tool_calls:
+        type: array
+        items:
+          type: object
+      memory:
+        type: array
+        items:
+          type: object
+      transcript:
+        type: array
+        items:
+          type: object
+      events:
+        type: array
+        items:
+          type: object
+      tool_audit:
+        type: array
+        items:
+          type: object
+      stop_reason:
+        type: string
+        enum:
+        - final
+        - max_turns
+        - error
+- schema_ref: schema://agent.stream.event.v2
+  json_schema:
+    type: object
+    required:
+    - type
+    - sequence
+    - run_id
+    - payload
+    additionalProperties: false
+    properties:
+      type:
+        type: string
+        enum:
+        - run_started
+        - memory_loaded
+        - skills_selected
+        - mcp_tools_loaded
+        - tools_loaded
+        - runtime_warning
+        - model_delta
+        - assistant_message
+        - tool_call_started
+        - tool_call_completed
+        - context_compressed
+        - run_completed
+        - run_failed
+      sequence:
+        type: integer
+      run_id:
+        type: string
+      payload:
+        type: object
+runtime:
+  type: python.in_process
+  entrypoint: plugin.py:ReactAgentLoopPlugin

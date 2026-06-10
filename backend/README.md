@@ -14,7 +14,7 @@ Python backend for the pluginized Agent platform.
 - Streaming Agent runs through plugin capabilities: `Plugin.stream()`, `AgentKernel.stream()`, `agent.stream`, `model.chat.stream`, and HTTP SSE.
 - Runtime diagnostics and discovery for Agent assembly, including capability candidates, dependency status, provider conflicts, explicit capability bindings, and startup order.
 - Runtime diagnostics include plugin startup failures such as missing required provider config.
-- ReAct Agent Loop receives current session history from the host runtime, loads recent plugin memory into the model context before each run, applies configured tool-call timeouts, and writes the user message, assistant answer, and tool traces back to memory.
+- ReAct Agent Loop receives current session history from the host runtime, loads recent plugin memory into the model context before each run, optionally injects a Skills catalog and MCP tool context when those plugins are assembled, applies configured tool-call timeouts, and writes the user message, assistant answer, and tool traces back to memory.
 - Local plugin marketplace simulation:
   - The frontend marketplace upload flow accepts plugin directories or `.pluginpkg` files.
   - `plugin-market/` stores uploaded marketplace packages internally during local development.
@@ -36,6 +36,8 @@ Python backend for the pluginized Agent platform.
   - `mcp.bridge`
 - Marketplace plugins include:
   - installable copies of the core built-in packages under `plugin-market/`
+  - `agent.loop.codex_bridge`
+  - `agent.loop.claude_code_bridge`
   - `context.compressor.model`
   - `workspace.sandbox`
   - `tool.greeter` sample package can be produced from `example-plugin/` for upload/install smoke checks.
@@ -116,6 +118,12 @@ For manual upload/install smoke checks, `../example-plugin/` contains a small `t
 Each plugin instance must configure `workspace_root`. File tools enforce path, symlink, size, and protected-path guards inside that workspace. `workspace.edit` requires a prior `workspace.read` and rejects edits if the file changed after it was read.
 
 `workspace.bash` applies command allow/deny policy and timeouts. On macOS, the default `sandbox.enabled: true` backend wraps commands with `/usr/bin/sandbox-exec`; on other platforms, OS command sandboxing is intentionally unavailable in v1 unless sandboxing is explicitly disabled and the caller accepts only path and command-policy guards.
+
+## Local CLI Agent Loop Bridges
+
+`../plugin-market/codex_bridge/` provides `agent.loop.codex_bridge`, which runs local `codex exec --json` and maps JSONL output into `agent.stream` events. `../plugin-market/claude_code_bridge/` provides `agent.loop.claude_code_bridge`, which runs local `claude -p --verbose --output-format stream-json` and maps text deltas into the same Agent stream contract.
+
+Both plugins are normal Agent Loop providers. They require `workspace_root`, enforce a process timeout, and expose explicit config switches for local CLI permission behavior. `agent.loop.codex_bridge.bypass_approvals_and_sandbox` passes Codex `--dangerously-bypass-approvals-and-sandbox`; `agent.loop.claude_code_bridge.dangerously_skip_permissions` passes Claude Code `--dangerously-skip-permissions`. Keep these disabled unless another sandbox boundary protects the workspace.
 
 Example `plugin.yaml`:
 

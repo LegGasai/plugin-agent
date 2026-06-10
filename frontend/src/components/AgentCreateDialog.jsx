@@ -2,8 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Bot, Check, PackageCheck, Plus, Search, Sparkles, X } from 'lucide-react';
 import { DEFAULT_PACKAGES, packageKinds, pluginDisplayTags, selectDefaultPackageVersions } from '../lib/plugins.js';
 
-const REQUIRED_PACKAGE_IDS = ['agent.loop.react'];
-
 export function AgentCreateDialog({
   open,
   mode = 'create',
@@ -17,9 +15,16 @@ export function AgentCreateDialog({
   const defaultPackageIds = useMemo(() => (
     DEFAULT_PACKAGES.filter((packageId) => availablePackages.some((item) => item.package_id === packageId))
   ), [availablePackages]);
-  const requiredPackageIds = useMemo(() => (
-    REQUIRED_PACKAGE_IDS.filter((packageId) => availablePackages.some((item) => item.package_id === packageId))
+  const agentLoopPackageIds = useMemo(() => (
+    availablePackages.filter((pluginPackage) => packageKinds(pluginPackage).includes('agent_loop')).map((pluginPackage) => pluginPackage.package_id)
   ), [availablePackages]);
+  const defaultAgentLoopPackageId = useMemo(() => (
+    defaultPackageIds.find((packageId) => agentLoopPackageIds.includes(packageId)) || agentLoopPackageIds[0] || ''
+  ), [agentLoopPackageIds, defaultPackageIds]);
+  const defaultAgentLoopPackage = useMemo(() => (
+    availablePackages.find((pluginPackage) => pluginPackage.package_id === defaultAgentLoopPackageId) || null
+  ), [availablePackages, defaultAgentLoopPackageId]);
+  const defaultAgentLoopNeedsModel = packageRequiresCapability(defaultAgentLoopPackage, 'model.chat');
   const modelPackageIds = useMemo(() => (
     availablePackages.filter((pluginPackage) => packageKinds(pluginPackage).includes('model')).map((pluginPackage) => pluginPackage.package_id)
   ), [availablePackages]);
@@ -27,20 +32,25 @@ export function AgentCreateDialog({
     defaultPackageIds.find((packageId) => modelPackageIds.includes(packageId)) || modelPackageIds[0] || ''
   ), [defaultPackageIds, modelPackageIds]);
   const defaultSelection = useMemo(() => normalizeSelection(
-    [...defaultPackageIds, ...requiredPackageIds, defaultModelPackageId].filter(Boolean),
-    requiredPackageIds,
+    [...defaultPackageIds, defaultAgentLoopPackageId, defaultModelPackageId].filter(Boolean),
+    agentLoopPackageIds,
+    defaultAgentLoopPackageId,
     modelPackageIds,
-    defaultModelPackageId,
-  ), [defaultModelPackageId, defaultPackageIds, modelPackageIds, requiredPackageIds]);
+    defaultAgentLoopNeedsModel ? defaultModelPackageId : '',
+    defaultAgentLoopNeedsModel,
+  ), [agentLoopPackageIds, defaultAgentLoopNeedsModel, defaultAgentLoopPackageId, defaultModelPackageId, defaultPackageIds, modelPackageIds]);
   const agentPackageIds = useMemo(() => {
     if (!agent) return [];
     const instancePackageIds = (agent.plugin_instances || []).map((instance) => instance.package_id);
     return instancePackageIds.length ? instancePackageIds : (agent.plugin_ids || []);
   }, [agent]);
   const editSelection = useMemo(() => {
-    const selectedModelPackageId = agentPackageIds.find((packageId) => modelPackageIds.includes(packageId)) || defaultModelPackageId;
-    return normalizeSelection(agentPackageIds, requiredPackageIds, modelPackageIds, selectedModelPackageId);
-  }, [agentPackageIds, defaultModelPackageId, modelPackageIds, requiredPackageIds]);
+    const selectedAgentLoopPackageId = agentPackageIds.find((packageId) => agentLoopPackageIds.includes(packageId)) || defaultAgentLoopPackageId;
+    const selectedAgentLoopPackage = availablePackages.find((pluginPackage) => pluginPackage.package_id === selectedAgentLoopPackageId) || null;
+    const selectedAgentLoopNeedsModel = packageRequiresCapability(selectedAgentLoopPackage, 'model.chat');
+    const selectedModelPackageId = agentPackageIds.find((packageId) => modelPackageIds.includes(packageId)) || '';
+    return normalizeSelection(agentPackageIds, agentLoopPackageIds, selectedAgentLoopPackageId, modelPackageIds, selectedAgentLoopNeedsModel ? selectedModelPackageId : '', selectedAgentLoopNeedsModel);
+  }, [agentLoopPackageIds, agentPackageIds, availablePackages, defaultAgentLoopPackageId, modelPackageIds]);
   const initialSelection = isEdit ? editSelection : defaultSelection;
   const [name, setName] = useState('研究助手');
   const [description, setDescription] = useState('由插件实例组装的轻量 Agent。');
@@ -72,15 +82,18 @@ export function AgentCreateDialog({
 
   const groupedPackages = useMemo(() => {
     const matchingPackageIds = new Set(filteredPackages.map((pluginPackage) => pluginPackage.package_id));
-    const core = availablePackages.filter((pluginPackage) => requiredPackageIds.includes(pluginPackage.package_id) && matchingPackageIds.has(pluginPackage.package_id));
+    const core = availablePackages.filter((pluginPackage) => agentLoopPackageIds.includes(pluginPackage.package_id) && matchingPackageIds.has(pluginPackage.package_id));
     const models = availablePackages.filter((pluginPackage) => modelPackageIds.includes(pluginPackage.package_id) && matchingPackageIds.has(pluginPackage.package_id));
     const optional = filteredPackages.filter((pluginPackage) => (
-      !requiredPackageIds.includes(pluginPackage.package_id) && !modelPackageIds.includes(pluginPackage.package_id)
+      !agentLoopPackageIds.includes(pluginPackage.package_id) && !modelPackageIds.includes(pluginPackage.package_id)
     ));
     return { core, models, optional };
-  }, [availablePackages, filteredPackages, modelPackageIds, requiredPackageIds]);
+  }, [agentLoopPackageIds, availablePackages, filteredPackages, modelPackageIds]);
 
-  const selectedModelId = selectedPackageIds.find((packageId) => modelPackageIds.includes(packageId)) || '';
+  const selectedAgentLoopId = selectedPackageIds.find((packageId) => agentLoopPackageIds.includes(packageId)) || '';
+  const selectedAgentLoopPackage = availablePackages.find((pluginPackage) => pluginPackage.package_id === selectedAgentLoopId) || null;
+  const selectedAgentLoopNeedsModel = packageRequiresCapability(selectedAgentLoopPackage, 'model.chat');
+  const selectedModelId = selectedAgentLoopNeedsModel ? (selectedPackageIds.find((packageId) => modelPackageIds.includes(packageId)) || '') : '';
   const dependencyReport = useMemo(
     () => analyzePackageDependencies(availablePackages, selectedPackageIds),
     [availablePackages, selectedPackageIds],
@@ -88,13 +101,28 @@ export function AgentCreateDialog({
   const hasBlockingDependencies = dependencyReport.requiredMissing.length > 0;
 
   function togglePackage(packageId) {
-    if (requiredPackageIds.includes(packageId)) return;
+    if (agentLoopPackageIds.includes(packageId)) {
+      const nextAgentLoopPackage = availablePackages.find((pluginPackage) => pluginPackage.package_id === packageId) || null;
+      const nextAgentLoopNeedsModel = packageRequiresCapability(nextAgentLoopPackage, 'model.chat');
+      setSelectedPackageIds((current) => normalizeSelection(
+        [...current.filter((item) => !agentLoopPackageIds.includes(item)), packageId],
+        agentLoopPackageIds,
+        packageId,
+        modelPackageIds,
+        nextAgentLoopNeedsModel ? selectedModelId || defaultModelPackageId : '',
+        nextAgentLoopNeedsModel,
+      ));
+      return;
+    }
     if (modelPackageIds.includes(packageId)) {
+      if (!selectedAgentLoopNeedsModel) return;
       setSelectedPackageIds((current) => normalizeSelection(
         [...current.filter((item) => !modelPackageIds.includes(item)), packageId],
-        requiredPackageIds,
+        agentLoopPackageIds,
+        selectedAgentLoopId || defaultAgentLoopPackageId,
         modelPackageIds,
         packageId,
+        true,
       ));
       return;
     }
@@ -108,9 +136,11 @@ export function AgentCreateDialog({
   function addProviderPackage(packageId) {
     setSelectedPackageIds((current) => normalizeSelection(
       [...current, packageId],
-      requiredPackageIds,
+      agentLoopPackageIds,
+      agentLoopPackageIds.includes(packageId) ? packageId : selectedAgentLoopId || defaultAgentLoopPackageId,
       modelPackageIds,
-      modelPackageIds.includes(packageId) ? packageId : selectedModelId || defaultModelPackageId,
+      selectedAgentLoopNeedsModel ? modelPackageIds.includes(packageId) ? packageId : selectedModelId || defaultModelPackageId : '',
+      selectedAgentLoopNeedsModel,
     ));
   }
 
@@ -121,12 +151,15 @@ export function AgentCreateDialog({
   function selectAllOptionalPackages() {
     setSelectedPackageIds(normalizeSelection(
       availablePackages
-        .filter((pluginPackage) => !modelPackageIds.includes(pluginPackage.package_id))
+        .filter((pluginPackage) => !agentLoopPackageIds.includes(pluginPackage.package_id) && !modelPackageIds.includes(pluginPackage.package_id))
         .map((pluginPackage) => pluginPackage.package_id)
-        .concat(selectedModelId || defaultModelPackageId),
-      requiredPackageIds,
+        .concat(selectedAgentLoopId || defaultAgentLoopPackageId)
+        .concat(selectedAgentLoopNeedsModel ? selectedModelId || defaultModelPackageId : ''),
+      agentLoopPackageIds,
+      selectedAgentLoopId || defaultAgentLoopPackageId,
       modelPackageIds,
-      selectedModelId || defaultModelPackageId,
+      selectedAgentLoopNeedsModel ? selectedModelId || defaultModelPackageId : '',
+      selectedAgentLoopNeedsModel,
     ));
   }
 
@@ -141,8 +174,8 @@ export function AgentCreateDialog({
       setError('至少选择一个插件。');
       return;
     }
-    if (modelPackageIds.length && !selectedModelId) {
-      setError('请选择一个模型插件。');
+    if (agentLoopPackageIds.length && !selectedAgentLoopId) {
+      setError('请选择一个核心运行插件。');
       return;
     }
     if (hasBlockingDependencies) {
@@ -215,13 +248,18 @@ export function AgentCreateDialog({
             <DependencyGuide report={dependencyReport} onAddPackage={addProviderPackage} />
             <div className="agent-plugin-list">
               {groupedPackages.core.length > 0 && (
-                <PluginGroup title="核心运行" description="智能体运行循环，创建时必须装配。">
-                  {groupedPackages.core.map((pluginPackage) => renderPluginOption(pluginPackage, { required: true }))}
+                <PluginGroup title="核心运行" description="选择一个 Agent Loop 作为智能体入口。">
+                  {groupedPackages.core.map((pluginPackage) => renderPluginOption(pluginPackage, { agentLoop: true }))}
                 </PluginGroup>
               )}
-              {groupedPackages.models.length > 0 && (
+              {selectedAgentLoopNeedsModel && groupedPackages.models.length > 0 && (
                 <PluginGroup title="模型插件" description="选择一个模型 provider，避免多个模型能力冲突。">
                   {groupedPackages.models.map((pluginPackage) => renderPluginOption(pluginPackage, { model: true }))}
+                </PluginGroup>
+              )}
+              {!selectedAgentLoopNeedsModel && selectedAgentLoopId && (
+                <PluginGroup title="模型插件" description="当前 Agent Loop 使用外部 CLI 自带模型，不需要选择平台模型 provider。">
+                  <p className="empty">Codex / Claude Bridge 不会调用平台的模型插件。</p>
                 </PluginGroup>
               )}
               {groupedPackages.optional.length > 0 && (
@@ -236,7 +274,7 @@ export function AgentCreateDialog({
           {error && <div className="field-error">{error}</div>}
           <div className="dialog-actions agent-create-actions">
             <button type="button" className="dialog-cancel-button" onClick={onCancel}>取消</button>
-            <button type="submit" className="dialog-confirm-button success" disabled={creating || !name.trim() || !selectedPackageIds.length || (modelPackageIds.length > 0 && !selectedModelId) || hasBlockingDependencies}>
+            <button type="submit" className="dialog-confirm-button success" disabled={creating || !name.trim() || !selectedPackageIds.length || (agentLoopPackageIds.length > 0 && !selectedAgentLoopId) || hasBlockingDependencies}>
               {creating ? (isEdit ? '保存中' : '创建中') : (isEdit ? '保存智能体' : '创建智能体')}
             </button>
           </div>
@@ -247,15 +285,14 @@ export function AgentCreateDialog({
 
   function renderPluginOption(pluginPackage, options = {}) {
     const selected = selectedPackageIds.includes(pluginPackage.package_id);
-    const inputType = options.model ? 'radio' : 'checkbox';
-    const badge = options.required ? '必选' : options.model ? '模型' : '';
+    const inputType = options.model || options.agentLoop ? 'radio' : 'checkbox';
+    const badge = options.agentLoop ? '入口' : options.model ? '模型' : '';
     return (
       <label className={selected ? 'agent-plugin-option selected' : 'agent-plugin-option'} key={pluginPackage.package_id}>
         <input
           type={inputType}
-          name={options.model ? 'model-plugin' : undefined}
+          name={options.agentLoop ? 'agent-loop-plugin' : options.model ? 'model-plugin' : undefined}
           checked={selected}
-          disabled={options.required}
           onChange={() => togglePackage(pluginPackage.package_id)}
         />
         <span className="plugin-check"><PackageCheck size={16} /></span>
@@ -404,10 +441,19 @@ function compareVersions(left, right) {
   return 0;
 }
 
-function normalizeSelection(packageIds, requiredPackageIds, modelPackageIds, preferredModelId) {
-  const modelId = packageIds.find((packageId) => modelPackageIds.includes(packageId)) || preferredModelId;
-  const withoutModels = packageIds.filter((packageId) => !modelPackageIds.includes(packageId));
-  return uniqueItems([...withoutModels, ...requiredPackageIds, modelId].filter(Boolean));
+function packageRequiresCapability(pluginPackage, capabilityName) {
+  return Boolean((pluginPackage?.requires || []).some((dependency) => (
+    dependency.capability === capabilityName && dependency.required !== false
+  )));
+}
+
+function normalizeSelection(packageIds, agentLoopPackageIds, preferredAgentLoopId, modelPackageIds, preferredModelId, includeModelProvider = true) {
+  const agentLoopId = packageIds.find((packageId) => agentLoopPackageIds.includes(packageId)) || preferredAgentLoopId;
+  const modelId = includeModelProvider ? packageIds.find((packageId) => modelPackageIds.includes(packageId)) || preferredModelId : '';
+  const withoutExclusiveProviders = packageIds.filter((packageId) => (
+    !agentLoopPackageIds.includes(packageId) && !modelPackageIds.includes(packageId)
+  ));
+  return uniqueItems([...withoutExclusiveProviders, agentLoopId, modelId].filter(Boolean));
 }
 
 function uniquePackages(packages) {

@@ -1,0 +1,13 @@
+command: ""
+workspace_root: ""
+timeout_ms: 600000
+max_output_bytes: 1000000
+model: ""
+profile: ""
+sandbox: workspace-write
+skip_git_repo_check: true
+ephemeral: true
+ignore_rules: false
+bypass_approvals_and_sandbox: false
+extra_args: []
+env: {}

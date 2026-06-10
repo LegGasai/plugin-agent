@@ -1,7 +1,7 @@
 # Plugin Agent
 
 <p align="center">
-  <strong>一个轻量、可插拔、面向产品化实验的 Agent 平台</strong>
+  <strong>一个由微内核和可插拔插件构成的 Agent 系统</strong>
 </p>
 
 <p align="center">
@@ -11,9 +11,9 @@
   <img alt="Plugins" src="https://img.shields.io/badge/Pluginized-Agent-7C3AED">
 </p>
 
-Plugin Agent 把 Agent 系统拆成一个稳定内核和一组可安装插件：模型、工具、记忆、技能、MCP 桥接、上下文压缩和 Agent Loop 都可以独立演进。你可以像组装产品一样创建 Agent、配置插件实例、绑定能力提供方，并在控制台里直接运行带会话历史的流式对话。
+Plugin Agent 是一个由微内核和可插拔插件构成的 Agent 系统。内核只负责插件装配、能力路由、依赖诊断、会话运行和运行时边界，模型、工具、记忆、技能、MCP 桥接、上下文压缩和 Agent Loop 都以插件形式独立演进。
 
-这个项目适合用来验证插件化 Agent 架构、构建内部工具型 Agent、试验模型/工具/记忆组合，以及开发可分发的本地插件包。
+你可以像组装应用一样创建 Agent：选择需要的插件实例，配置密钥与运行参数，显式绑定能力 provider，并在控制台中运行带会话历史、工具调用和流式输出的智能体。
 
 ## 核心能力
 
@@ -92,12 +92,14 @@ plugin-agent/
 
 | 插件 ID | 名称 | 类型 | 主要作用 |
 | --- | --- | --- | --- |
-| `agent.loop.react` | ReAct 智能体循环 | Agent Loop | 基于模型、工具和记忆运行智能体对话。 |
+| `agent.loop.react` | ReAct 智能体循环 | Agent Loop | 基于模型、工具、记忆、Skills 和 MCP 工具上下文运行智能体对话。 |
+| `agent.loop.codex_bridge` | Codex Bridge | Agent Loop | 调用本地 `codex exec` 执行任务并桥接流式输出。 |
+| `agent.loop.claude_code_bridge` | Claude Code Bridge | Agent Loop | 调用本地 `claude --print` 执行任务并桥接流式输出。 |
 | `context.manager` | 上下文管理器 | 上下文 | 编排上下文压缩并生成后续模型消息。 |
 | `context.compressor.summary` | 上下文摘要压缩 | 上下文 | 不依赖模型的轻量摘要压缩。 |
 | `context.compressor.model` | 模型上下文摘要压缩 | 上下文 | 使用模型生成上下文续跑摘要。 |
 | `memory.file` | 文件记忆 | 记忆 | 用本地 JSONL 文件保存和检索记忆。 |
-| `skill.registry` | 技能注册表 | 技能 | 加载、搜索和读取本地 `SKILL.md` 技能。 |
+| `skill.registry` | 技能注册表 | 技能 | 加载本地 `SKILL.md`，提供技能列表、激活和文件读取能力。 |
 | `tool.runtime` | 工具运行时 | 工具运行时 | 发现工具、校验参数并路由工具调用。 |
 | `tool.basic` | 基础工具集 | 工具 | 提供 echo、当前时间、数字相加等基础工具。 |
 | `tool.http_request` | HTTP 请求工具 | 工具 | 调用固定 HTTP 端点或受限 Raw HTTP 请求。 |

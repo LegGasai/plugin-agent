@@ -12,6 +12,8 @@ export const DEFAULT_PACKAGES = [
 
 export const PACKAGE_CN = {
   'agent.loop.react': { name: 'ReAct 智能体循环', description: '基于模型推理、工具调用和记忆写入的智能体运行循环。' },
+  'agent.loop.codex_bridge': { name: 'Codex Bridge', description: '通过本地 codex exec 运行任务，并桥接为 Agent 流式输出。' },
+  'agent.loop.claude_code_bridge': { name: 'Claude Code Bridge', description: '通过本地 claude --print 运行任务，并桥接为 Agent 流式输出。' },
   'model.openai_compatible': { name: 'OpenAI 兼容模型', description: '调用兼容 OpenAI Chat Completions 的模型服务。' },
   'model.openrouter': { name: 'OpenRouter 模型', description: '通过 OpenRouter 的 OpenAI-compatible API 调用多家模型。' },
   'model.deepseek': { name: 'DeepSeek 模型', description: '通过 DeepSeek 的 OpenAI-compatible API 调用 DeepSeek 模型。' },
