@@ -136,6 +136,20 @@ cd frontend && yarn build
 docker compose -f docker/docker-compose.yml config
 ```
 
+## 后续演进
+
+Plugin Agent 会继续保持“微内核 + 插件运行时”的边界。当前 `python.in_process` 适合开发期和可信插件，后续本地 App 形态会优先演进为桌面壳启动本地后端，同时保留浏览器访问同一个 `localhost` 控制台的能力。
+
+本地运行时会拆成两层：Host Backend 负责 Agent 微内核、能力路由、会话、配置和诊断；Plugin Runtime Daemon 专门负责用户插件的安装、解包、依赖环境、进程启动、日志、热重载和调用转发。用户上传的插件默认不直接 import 到 Host Backend，而是由 daemon 放进独立工作目录并通过结构化协议调用。
+
+插件运行时会从单一 Python in-process 逐步扩展为可替换的 runtime adapter：
+
+- `python.venv_process`：为每个 Python 插件创建独立工作目录和 `.venv`，通过进程边界、超时和结构化协议调用插件，降低依赖冲突和崩溃影响。
+- `http` / `wasm`：为远端服务插件和更强隔离的本地插件预留运行时。
+- `Daemon Plugin`：使用隔离的daemon提供runtime依赖并运行插件。
+
+本地 App 打包时会内置受控 Python runtime，用户无需自行安装 Python；用户上传的插件仍可声明依赖、资源需求和权限边界，由 Plugin Runtime Daemon 负责准备运行环境并执行。
+
 ## 许可证
 
 本项目使用 [Apache License 2.0](./LICENSE)。
