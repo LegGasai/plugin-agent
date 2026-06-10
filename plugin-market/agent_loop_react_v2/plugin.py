@@ -23,9 +23,9 @@ class ReactAgentLoopPlugin(PluginBase):
             elif event["type"] == "run_failed":
                 failed_payload = event["payload"]
         if final_payload is not None:
-            return {**final_payload, "events": streamed_events}
+            return final_payload
         if failed_payload is not None:
-            return {**failed_payload, "events": streamed_events}
+            return failed_payload
         raise RuntimeError("agent stream ended without a completion event")
 
     def stream(self, capability: str, payload: dict[str, Any], context: dict[str, Any]) -> Iterator[dict[str, Any]]:
@@ -90,6 +90,9 @@ class ReactAgentLoopPlugin(PluginBase):
         yield emit("tools_loaded", {"tools": [{"tool_id": tool["tool_id"], "function": tool["function"]} for tool in tools]})
 
         for turn in range(self.config.get("limits", {}).get("max_turns", 8)):
+            compressed = self._maybe_compress_context(transcript, model_messages, context)
+            if compressed is not None:
+                yield emit("context_compressed", compressed)
             try:
                 assistant = None
                 for model_event in self._model_turn_events(
@@ -149,9 +152,6 @@ class ReactAgentLoopPlugin(PluginBase):
                     stop_reason = "error"
                     yield emit("run_failed", self._final_payload(final_answer, stop_reason, memory, transcript, events, tool_audit, tool_calls))
                     return
-            compressed = self._maybe_compress_context(transcript, model_messages, context)
-            if compressed is not None:
-                yield emit("context_compressed", compressed)
 
         if stop_reason == "max_turns":
             final_payload = self._final_payload(final_answer, stop_reason, memory, transcript, events, tool_audit, tool_calls)
@@ -329,14 +329,93 @@ class ReactAgentLoopPlugin(PluginBase):
         context: dict[str, Any],
     ) -> dict[str, Any] | None:
         assert self.kernel is not None
-        limit = self.config.get("limits", {}).get("compress_after_messages", 20)
-        if len(transcript) < limit or not self.kernel.capability_registry.has("context.compress"):
+        context_config = self._context_config()
+        if not context_config.get("auto_compress", True) or not self.kernel.capability_registry.has("context.compress"):
             return None
-        result = self.kernel.invoke("context.compress", {"messages": transcript}, context).payload
-        summary = result.get("summary", "")
-        if summary:
-            model_messages[:] = [{"role": "system", "content": f"Conversation summary so far: {summary}"}, model_messages[-1]]
-        return result
+
+        context_window_tokens = int(context_config.get("context_window_tokens", 262144))
+        trigger_ratio = float(context_config.get("trigger_ratio", 0.85))
+        estimated_tokens = self._estimate_messages_tokens(model_messages)
+        trigger_tokens = max(1, int(context_window_tokens * trigger_ratio))
+        if estimated_tokens < trigger_tokens:
+            return None
+
+        preserve_recent = int(context_config.get("preserve_recent_messages", 8))
+        system_prefix, compressible_model_messages = self._split_leading_system_messages(model_messages)
+        if len(compressible_model_messages) <= max(preserve_recent, 0):
+            return None
+
+        result = self.kernel.invoke(
+            "context.compress",
+            {
+                "messages": transcript,
+                "model_messages": compressible_model_messages,
+                "preserve_tail_messages": preserve_recent,
+            },
+            context,
+        ).payload
+
+        replacement_model_messages = result.get("model_messages")
+        if isinstance(replacement_model_messages, list) and replacement_model_messages:
+            model_messages[:] = [*system_prefix, *replacement_model_messages]
+        else:
+            summary = result.get("summary", "")
+            if summary:
+                model_messages[:] = [
+                    *system_prefix,
+                    {"role": "system", "content": f"Conversation summary so far: {summary}"},
+                    *self._recent_messages(compressible_model_messages, preserve_recent),
+                ]
+
+        replacement_messages = result.get("messages")
+        if isinstance(replacement_messages, list) and replacement_messages:
+            transcript[:] = replacement_messages
+
+        return {
+            **result,
+            "trigger": {
+                "estimated_tokens": estimated_tokens,
+                "context_window_tokens": context_window_tokens,
+                "trigger_ratio": trigger_ratio,
+                "trigger_tokens": trigger_tokens,
+                "preserve_recent_messages": preserve_recent,
+            },
+        }
+
+    def _context_config(self) -> dict[str, Any]:
+        return self.config.get("context", {}) or {}
+
+    def _split_leading_system_messages(self, messages: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        index = 0
+        for message in messages:
+            if message.get("role") != "system":
+                break
+            index += 1
+        return messages[:index], messages[index:]
+
+    def _recent_messages(self, messages: list[dict[str, Any]], count: int) -> list[dict[str, Any]]:
+        if count <= 0:
+            return []
+        return messages[-count:]
+
+    def _estimate_messages_tokens(self, messages: list[dict[str, Any]]) -> int:
+        chars_per_token = max(1.0, float(self._context_config().get("chars_per_token", 4)))
+        total_chars = 0
+        for message in messages:
+            total_chars += 4
+            total_chars += len(str(message.get("role", "")))
+            content = message.get("content", "")
+            if isinstance(content, str):
+                total_chars += len(content)
+            else:
+                total_chars += len(json.dumps(content, ensure_ascii=False))
+            if message.get("tool_calls"):
+                total_chars += len(json.dumps(message.get("tool_calls"), ensure_ascii=False))
+            if message.get("name"):
+                total_chars += len(str(message.get("name")))
+            if message.get("tool_call_id"):
+                total_chars += len(str(message.get("tool_call_id")))
+        return max(1, int((total_chars + chars_per_token - 1) // chars_per_token))
 
     def _skills_config(self) -> dict[str, Any]:
         return self.config.get("skills", {}) or {}
@@ -368,10 +447,13 @@ class ReactAgentLoopPlugin(PluginBase):
             "tool_calls": tool_calls,
             "memory": memory,
             "transcript": transcript,
-            "events": list(events),
+            "events": self._persistable_events(events),
             "tool_audit": tool_audit,
             "stop_reason": stop_reason,
         }
+
+    def _persistable_events(self, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [event for event in events if event.get("type") != "model_delta"]
 
     def _normalize_assistant_message(self, message: dict[str, Any], tool_name_to_id: dict[str, str]) -> dict[str, Any]:
         calls = []

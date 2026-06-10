@@ -88,6 +88,37 @@ schemas:
             title: Compress After Messages
             minimum: 1
             default: 20
+      context:
+        type: object
+        title: Context
+        additionalProperties: false
+        properties:
+          auto_compress:
+            type: boolean
+            title: Auto Compress
+            default: true
+          context_window_tokens:
+            type: integer
+            title: Context Window Tokens
+            minimum: 1
+            default: 262144
+          trigger_ratio:
+            type: number
+            title: Trigger Ratio
+            minimum: 0
+            maximum: 1
+            default: 0.85
+          preserve_recent_messages:
+            type: integer
+            title: Preserve Recent Messages
+            minimum: 0
+            maximum: 100
+            default: 8
+          chars_per_token:
+            type: number
+            title: Chars Per Token
+            minimum: 1
+            default: 4
       skills:
         type: object
         title: Skills
