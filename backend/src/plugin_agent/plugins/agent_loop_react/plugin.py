@@ -261,9 +261,16 @@ class ReactAgentLoopPlugin(PluginBase):
         limit = self.config.get("limits", {}).get("compress_after_messages", 20)
         if len(transcript) < limit or not self.kernel.capability_registry.has("context.compress"):
             return None
-        result = self.kernel.invoke("context.compress", {"messages": transcript}, context).payload
+        result = self.kernel.invoke(
+            "context.compress",
+            {"messages": transcript, "model_messages": model_messages},
+            context,
+        ).payload
         summary = result.get("summary", "")
-        if summary:
+        replacement_model_messages = result.get("model_messages")
+        if isinstance(replacement_model_messages, list) and replacement_model_messages:
+            model_messages[:] = replacement_model_messages
+        elif summary:
             model_messages[:] = [{"role": "system", "content": f"Conversation summary so far: {summary}"}, model_messages[-1]]
         return result
 

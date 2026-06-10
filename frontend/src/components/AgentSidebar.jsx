@@ -119,7 +119,7 @@ export function AgentSidebar({
             <PluginConfigPanel
               key={instance.instance_id}
               instance={instance}
-              pluginPackage={packages.find((item) => item.package_id === instance.package_id)}
+              pluginPackage={findPackageForInstance(packages, instance)}
               onSave={(config) => savePluginConfig(instance.instance_id, stripRedactedSecrets(config))}
               onRestart={() => restartPluginInstance(instance.instance_id)}
             />
@@ -129,6 +129,19 @@ export function AgentSidebar({
       </div>
     </section>
   );
+}
+
+function findPackageForInstance(packages, instance) {
+  const candidates = packages.filter((item) => item.package_id === instance.package_id);
+  if (!candidates.length) return null;
+  const pinned = instance.package_version || instance.version;
+  if (pinned) {
+    const exact = candidates.find((item) => item.version === pinned);
+    if (exact) return exact;
+  }
+  return candidates
+    .slice()
+    .sort((left, right) => String(right.version || '').localeCompare(String(left.version || ''), undefined, { numeric: true }))[0];
 }
 
 function RuntimeOverview({

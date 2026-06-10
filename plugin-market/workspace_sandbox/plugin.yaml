@@ -1,0 +1,267 @@
+descriptor:
+  id: workspace.sandbox
+  version: 1.0.0
+  name: 代码沙盒
+  description: 在隔离的代码沙盒内提供文件读写、搜索和命令执行工具。
+  categories: [tool]
+  tags: [Coding, Workspace, Sandbox]
+  config_schema_ref: schema://workspace.sandbox.config.v1
+  provides:
+    - name: workspace.ls
+      version: 1.0.0
+      input_schema_ref: schema://workspace.ls.input.v1
+      output_schema_ref: schema://workspace.tool.output.v1
+    - name: workspace.read
+      version: 1.0.0
+      input_schema_ref: schema://workspace.read.input.v1
+      output_schema_ref: schema://workspace.tool.output.v1
+    - name: workspace.write
+      version: 1.0.0
+      input_schema_ref: schema://workspace.write.input.v1
+      output_schema_ref: schema://workspace.tool.output.v1
+    - name: workspace.edit
+      version: 1.0.0
+      input_schema_ref: schema://workspace.edit.input.v1
+      output_schema_ref: schema://workspace.tool.output.v1
+    - name: workspace.grep
+      version: 1.0.0
+      input_schema_ref: schema://workspace.grep.input.v1
+      output_schema_ref: schema://workspace.tool.output.v1
+    - name: workspace.glob
+      version: 1.0.0
+      input_schema_ref: schema://workspace.glob.input.v1
+      output_schema_ref: schema://workspace.tool.output.v1
+    - name: workspace.bash
+      version: 1.0.0
+      input_schema_ref: schema://workspace.bash.input.v1
+      output_schema_ref: schema://workspace.tool.output.v1
+runtime:
+  type: python.in_process
+  entrypoint: plugin.py:WorkspaceSandboxPlugin
+resources:
+  - kind: tool
+    id: workspace.ls
+    title: LS
+    description: List workspace files and directories.
+    invoke_capability: workspace.ls
+    schema_refs:
+      input: schema://workspace.ls.input.v1
+      output: schema://workspace.tool.output.v1
+  - kind: tool
+    id: workspace.read
+    title: Read
+    description: Read a text file from the workspace.
+    invoke_capability: workspace.read
+    schema_refs:
+      input: schema://workspace.read.input.v1
+      output: schema://workspace.tool.output.v1
+  - kind: tool
+    id: workspace.write
+    title: Write
+    description: Write full text content to a workspace file.
+    invoke_capability: workspace.write
+    schema_refs:
+      input: schema://workspace.write.input.v1
+      output: schema://workspace.tool.output.v1
+  - kind: tool
+    id: workspace.edit
+    title: Edit
+    description: Edit an existing workspace file by exact string replacement.
+    invoke_capability: workspace.edit
+    schema_refs:
+      input: schema://workspace.edit.input.v1
+      output: schema://workspace.tool.output.v1
+  - kind: tool
+    id: workspace.grep
+    title: Grep
+    description: Search workspace files with a regular expression.
+    invoke_capability: workspace.grep
+    schema_refs:
+      input: schema://workspace.grep.input.v1
+      output: schema://workspace.tool.output.v1
+  - kind: tool
+    id: workspace.glob
+    title: Glob
+    description: Find workspace files matching a glob pattern.
+    invoke_capability: workspace.glob
+    schema_refs:
+      input: schema://workspace.glob.input.v1
+      output: schema://workspace.tool.output.v1
+  - kind: tool
+    id: workspace.bash
+    title: Bash
+    description: Run an allowed shell command inside the code sandbox.
+    invoke_capability: workspace.bash
+    schema_refs:
+      input: schema://workspace.bash.input.v1
+      output: schema://workspace.tool.output.v1
+schemas:
+  - schema_ref: schema://workspace.sandbox.config.v1
+    json_schema:
+      type: object
+      required: [workspace_root]
+      additionalProperties: false
+      properties:
+        workspace_root:
+          type: string
+          title: Workspace Root
+        sandbox:
+          type: object
+          additionalProperties: false
+          properties:
+            enabled:
+              type: boolean
+              default: true
+            backend:
+              type: string
+              enum: [seatbelt]
+              default: seatbelt
+            network_access:
+              type: boolean
+              default: false
+            command_timeout_ms:
+              type: integer
+              minimum: 1
+              default: 30000
+            max_output_bytes:
+              type: integer
+              minimum: 1024
+              default: 200000
+            allowed_commands:
+              type: array
+              items:
+                type: string
+            denied_patterns:
+              type: array
+              items:
+                type: string
+        filesystem:
+          type: object
+          additionalProperties: false
+          properties:
+            max_file_bytes:
+              type: integer
+              minimum: 1
+              default: 1048576
+            protected_paths:
+              type: array
+              items:
+                type: string
+  - schema_ref: schema://workspace.ls.input.v1
+    json_schema:
+      type: object
+      additionalProperties: false
+      properties:
+        path:
+          type: string
+          default: "."
+        recursive:
+          type: boolean
+          default: false
+        include_hidden:
+          type: boolean
+          default: false
+        max_entries:
+          type: integer
+          minimum: 1
+          default: 200
+  - schema_ref: schema://workspace.read.input.v1
+    json_schema:
+      type: object
+      required: [path]
+      additionalProperties: false
+      properties:
+        path:
+          type: string
+        offset:
+          type: integer
+          minimum: 1
+          default: 1
+        limit:
+          type: integer
+          minimum: 1
+          default: 2000
+  - schema_ref: schema://workspace.write.input.v1
+    json_schema:
+      type: object
+      required: [path, content]
+      additionalProperties: false
+      properties:
+        path:
+          type: string
+        content:
+          type: string
+        create_only:
+          type: boolean
+          default: false
+  - schema_ref: schema://workspace.edit.input.v1
+    json_schema:
+      type: object
+      required: [file_path, old_string, new_string]
+      additionalProperties: false
+      properties:
+        file_path:
+          type: string
+        old_string:
+          type: string
+        new_string:
+          type: string
+        replace_all:
+          type: boolean
+          default: false
+  - schema_ref: schema://workspace.grep.input.v1
+    json_schema:
+      type: object
+      required: [pattern]
+      additionalProperties: false
+      properties:
+        pattern:
+          type: string
+        path:
+          type: string
+          default: "."
+        include:
+          type: string
+        exclude:
+          type: string
+        max_matches:
+          type: integer
+          minimum: 1
+          default: 250
+  - schema_ref: schema://workspace.glob.input.v1
+    json_schema:
+      type: object
+      required: [pattern]
+      additionalProperties: false
+      properties:
+        pattern:
+          type: string
+        path:
+          type: string
+          default: "."
+        max_matches:
+          type: integer
+          minimum: 1
+          default: 250
+  - schema_ref: schema://workspace.bash.input.v1
+    json_schema:
+      type: object
+      required: [command]
+      additionalProperties: false
+      properties:
+        command:
+          type: string
+        cwd:
+          type: string
+          default: "."
+        timeout_ms:
+          type: integer
+          minimum: 1
+  - schema_ref: schema://workspace.tool.output.v1
+    json_schema:
+      type: object
+      required: [result]
+      additionalProperties: false
+      properties:
+        result:
+          type: object

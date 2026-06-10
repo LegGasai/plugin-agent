@@ -13,15 +13,19 @@ This repository is a small monorepo for a lightweight pluginized Agent platform.
 - `docker/`
   - Docker Compose deployment for backend plus Nginx-served frontend.
   - Backend images copy the root `plugin-market/` into `/app/plugin-market`.
+- `docs/`
+  - User-facing project and plugin documentation.
 - `.agents/skills/`
   - Project-local Codex skills for repeatable workflows.
   - Use `.agents/skills/maintain-project-docs` when code or structure changes require README/AGENTS updates.
 - `plugin-market/`
   - Development-time local marketplace for upload/install simulation.
-  - Existing user-facing plugin packages live here as unpacked plugin directories.
+  - Internal storage backing the frontend upload/install flow.
   - Keep generated `.pluginpkg` artifacts out of git.
-- `test-plugin/`
+- `example-plugin/`
   - Small external greeter plugin package for upload/install smoke checks.
+- `plugin-market/http-tool-plugin/`
+  - Local marketplace HTTP tool plugin package demonstrating configured endpoints, secret headers, and optional raw requests.
 
 Root-level coordination files and directories:
 
@@ -30,7 +34,8 @@ Root-level coordination files and directories:
 - `.gitignore`
 - `.dockerignore`
 - `docker/`
-- `test-plugin/`
+- `docs/`
+- `example-plugin/`
 - `plugin-market/.gitkeep`
   - Plugin package directories under `plugin-market/`
 
@@ -41,7 +46,7 @@ Do not add backend source, backend tests, or frontend source files at the reposi
 - The backend kernel is the private host/runtime.
 - `backend/src/plugin_agent_sdk/` is the public plugin SDK surface.
 - Third-party plugins should depend on the SDK, not private kernel implementation.
-- New product plugins should start in `plugin-market/` as installable packages; `backend/src/plugin_agent/plugins/` is for host compatibility implementations.
+- User-facing plugin installation should go through the frontend upload/install flow; `backend/src/plugin_agent/plugins/` is for host compatibility implementations.
 - The frontend should consume backend HTTP APIs through `frontend/src/lib/api.js`.
 
 ## Verification

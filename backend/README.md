@@ -16,11 +16,12 @@ Python backend for the pluginized Agent platform.
 - Runtime diagnostics include plugin startup failures such as missing required provider config.
 - ReAct Agent Loop receives current session history from the host runtime, loads recent plugin memory into the model context before each run, applies configured tool-call timeouts, and writes the user message, assistant answer, and tool traces back to memory.
 - Local plugin marketplace simulation:
-  - `plugin-market/` stores local marketplace plugin directories and uploaded `.pluginpkg` files during development.
+  - The frontend marketplace upload flow accepts plugin directories or `.pluginpkg` files.
+  - `plugin-market/` stores uploaded marketplace packages internally during local development.
   - `.plugin-agent/installed-plugins/` stores installed plugin packages by `package_id/version`.
   - `GET /api/marketplace/plugins` lists marketplace packages; `GET /api/installed-plugin-packages` lists installed and built-in packages available for Agent assembly.
-  - Agent assembly can load both built-in plugins and installed external plugins. Installed packages win over built-in compatibility implementations when they share the same `package_id`.
-  - Multiple installed versions of one `package_id` can coexist; saved Agent plugin instances pin `package_version`.
+  - Agent assembly can load both built-in plugins and installed external plugins. The newest package version is selected by default; installed packages win over built-in compatibility implementations when the `package_id` and version are the same.
+  - The installed plugin view shows one active version per `package_id`. Installing another version switches the active version and removes unused older installs; versions pinned by existing Agents are retained for reproducibility but hidden from the installed plugin list.
 - Built-in plugins:
   - `agent.loop.react`
   - `model.openai_compatible`
@@ -30,12 +31,14 @@ Python backend for the pluginized Agent platform.
   - `skill.registry`
   - `tool.runtime`
   - `tool.basic`
+  - `context.compressor.summary`
+  - `context.manager`
   - `mcp.bridge`
 - Marketplace plugins include:
   - installable copies of the core built-in packages under `plugin-market/`
-  - `context.compressor.summary`
   - `context.compressor.model`
-  - `tool.greeter` sample package can be produced from `test-plugin/` for upload/install smoke checks.
+  - `workspace.sandbox`
+  - `tool.greeter` sample package can be produced from `example-plugin/` for upload/install smoke checks.
 
 ## Public Plugin SDK
 
@@ -56,14 +59,13 @@ Plugins that support streaming may also implement `stream(capability, payload, c
 
 ## Plugin Layout
 
-Development marketplace plugins live under the repository root `plugin-market/`:
+Uploadable external plugins use this package layout:
 
 ```text
-plugin-market/
-  some_plugin/
-    plugin.yaml
-    config.yaml
-    plugin.py
+some_plugin/
+  plugin.yaml
+  config.yaml
+  plugin.py
 ```
 
 Current built-in compatibility implementations still live under `src/plugin_agent/plugins/`:
@@ -103,9 +105,17 @@ Initial runtime support is intentionally small:
 - The plugin class must extend `plugin_agent_sdk.Plugin`.
 - Sibling Python modules inside the plugin package can be imported by the entrypoint module.
 
-Marketplace packages must include `runtime.entrypoint`. Built-in compatibility plugins can still use `manifest.yaml`, but product plugins should live in `plugin-market/` and be installed from there so they can evolve without changing the host.
+Marketplace packages must include `runtime.entrypoint`. Built-in compatibility plugins can still use `manifest.yaml`, but product plugins should be uploaded through the marketplace flow so they can evolve without changing the host.
 
-For manual upload/install smoke checks, `../test-plugin/` contains a small `tool.greeter` package that exercises plugin upload, install, resource discovery, and tool invocation without importing private backend code.
+For manual upload/install smoke checks, `../example-plugin/` contains a small `tool.greeter` package that exercises plugin upload, install, resource discovery, and tool invocation without importing private backend code.
+
+## Code Sandbox Plugin
+
+`../plugin-market/workspace_sandbox/` provides the `workspace.sandbox` marketplace package. It is a normal product plugin, not kernel code, and exposes coding tools through `tool.runtime`: `workspace.ls`, `workspace.read`, `workspace.write`, `workspace.edit`, `workspace.grep`, `workspace.glob`, and `workspace.bash`.
+
+Each plugin instance must configure `workspace_root`. File tools enforce path, symlink, size, and protected-path guards inside that workspace. `workspace.edit` requires a prior `workspace.read` and rejects edits if the file changed after it was read.
+
+`workspace.bash` applies command allow/deny policy and timeouts. On macOS, the default `sandbox.enabled: true` backend wraps commands with `/usr/bin/sandbox-exec`; on other platforms, OS command sandboxing is intentionally unavailable in v1 unless sandboxing is explicitly disabled and the caller accepts only path and command-policy guards.
 
 Example `plugin.yaml`:
 
@@ -152,7 +162,7 @@ Chat sessions are product/runtime state, not plugin state. The host stores `sess
 
 Memory plugins remain responsible for longer-lived or semantic memory capabilities such as `memory.query`, `memory.write`, and retrieval policies. Agent Loop plugins may combine both sources: deterministic session history from the host plus optional long-term memory from memory capabilities. The built-in file memory stores the current `agent_id` and `session_id` in automatic memory metadata and filters queries by that scope, so separate chat sessions do not leak remembered messages into each other.
 
-Context compressor plugins provide `context.compress`. `context.compressor.summary` is a simple local transcript compactor, while `context.compressor.model` depends on `model.chat` and uses the selected model provider to generate a handoff summary.
+Context rewriting is plugin-composed. Agent Loop plugins call `context.compress` when it is available. The built-in `context.manager` provides that capability, delegates summarization to a selected `context.compressor.compress` provider, and returns replacement messages for continued model reasoning. `context.compressor.summary` is a simple local transcript compactor, while `context.compressor.model` depends on `model.chat` and uses the selected model provider to generate a handoff summary.
 
 ## CLI
 
@@ -181,6 +191,20 @@ Saved Agents store provider choices in Agent-level `capability_bindings`, not pl
 ```bash
 uv run plugin-agent serve --host 127.0.0.1 --port 8000
 ```
+
+Logging is configured by the CLI server entrypoint, not at import time. By default it writes INFO logs to stdout using:
+
+```text
+%(asctime)s - %(name)s - %(levelname)s - %(message)s
+```
+
+Use `--log-level`, `PLUGIN_AGENT_LOG_LEVEL`, `--log-file`, or `PLUGIN_AGENT_LOG_FILE` to tune it:
+
+```bash
+uv run plugin-agent serve --log-level DEBUG --log-file .plugin-agent/logs/backend.log
+```
+
+Do not log secrets, full user messages, model responses, or workspace file contents. Prefer IDs, package names, status codes, diagnostic codes, and counts.
 
 Core JSON endpoints:
 

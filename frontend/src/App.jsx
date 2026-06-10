@@ -16,12 +16,14 @@ import {
 } from './lib/api.js';
 import { DEFAULT_PACKAGES, normalizePackage } from './lib/plugins.js';
 import { ConfirmDialog } from './components/ConfirmDialog.jsx';
+import { NotificationToast } from './components/NotificationToast.jsx';
 import { AgentSquarePage } from './pages/AgentSquarePage.jsx';
 import { MarketPage } from './pages/MarketPage.jsx';
 import { WorkbenchPage } from './pages/WorkbenchPage.jsx';
 
 const DEFAULT_VIEW = 'square';
 const VIEW_IDS = new Set(['market', 'square', 'workbench']);
+const ACTIVE_AGENT_STORAGE_KEY = 'plugin-agent.activeAgentId';
 const WELCOME_MESSAGE = {
   id: 'welcome',
   role: 'assistant',
@@ -40,11 +42,33 @@ function routeForView(view) {
   return `/${view}`;
 }
 
+function readStoredActiveAgentId() {
+  if (typeof window === 'undefined') return '';
+  try {
+    return window.localStorage.getItem(ACTIVE_AGENT_STORAGE_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+function writeStoredActiveAgentId(agentId) {
+  if (typeof window === 'undefined') return;
+  try {
+    if (agentId) {
+      window.localStorage.setItem(ACTIVE_AGENT_STORAGE_KEY, agentId);
+    } else {
+      window.localStorage.removeItem(ACTIVE_AGENT_STORAGE_KEY);
+    }
+  } catch {
+    // Ignore storage errors so private-mode or quota failures do not block the console.
+  }
+}
+
 export default function App() {
   const [view, setViewState] = useState(readViewFromUrl);
   const [packages, setPackages] = useState([]);
   const [agents, setAgents] = useState([]);
-  const [activeAgentId, setActiveAgentId] = useState('');
+  const [activeAgentId, setActiveAgentIdState] = useState(readStoredActiveAgentId);
   const [agentDetails, setAgentDetails] = useState(null);
   const [resources, setResources] = useState([]);
   const [capabilities, setCapabilities] = useState([]);
@@ -58,6 +82,7 @@ export default function App() {
   const [messages, setMessages] = useState([WELCOME_MESSAGE]);
   const [status, setStatus] = useState('就绪');
   const [error, setError] = useState('');
+  const [toast, setToast] = useState(null);
   const [isRunning, setIsRunning] = useState(false);
   const [pendingDeleteAgent, setPendingDeleteAgent] = useState(null);
 
@@ -85,6 +110,14 @@ export default function App() {
     }
   }, [activeAgentId]);
 
+  function setActiveAgentId(nextAgentId) {
+    setActiveAgentIdState((current) => {
+      const value = typeof nextAgentId === 'function' ? nextAgentId(current) : nextAgentId;
+      writeStoredActiveAgentId(value || '');
+      return value || '';
+    });
+  }
+
   function setView(nextView) {
     const normalizedView = VIEW_IDS.has(nextView) ? nextView : DEFAULT_VIEW;
     setViewState(normalizedView);
@@ -101,10 +134,17 @@ export default function App() {
       const { packageData, agentData } = await loadBootstrapData();
       const rawPackages = packageData?.plugin_packages || [];
       const normalized = rawPackages.map(normalizePackage);
+      const nextAgents = agentData.agents || [];
       setPackages(normalized);
-      setAgents(agentData.agents || []);
-      if (agentData.agents?.[0]) {
-        setActiveAgentId((current) => current || agentData.agents[0].id);
+      setAgents(nextAgents);
+      if (nextAgents[0]) {
+        setActiveAgentId((current) => {
+          const currentExists = current && nextAgents.some((agent) => agent.id === current);
+          if (currentExists) return current;
+          const stored = readStoredActiveAgentId();
+          const storedExists = stored && nextAgents.some((agent) => agent.id === stored);
+          return storedExists ? stored : nextAgents[0].id;
+        });
       } else {
         setActiveAgentId('');
         setAgentDetails(null);
@@ -301,6 +341,41 @@ export default function App() {
     }
   }
 
+  async function updateAgentComposition(agent, { name, description, packageIds }) {
+    if (!agent?.id) return null;
+    const sourceAgent = agentDetails?.id === agent.id ? agentDetails : agent;
+    const packageById = new Map(packages.map((pluginPackage) => [pluginPackage.package_id, pluginPackage]));
+    const existingByPackage = new Map();
+    for (const instance of sourceAgent.plugin_instances || []) {
+      if (!existingByPackage.has(instance.package_id)) {
+        existingByPackage.set(instance.package_id, instance);
+      }
+    }
+    const selectedPackageIds = (packageIds || []).filter((packageId) => packageById.has(packageId));
+    const pluginInstances = selectedPackageIds.map((packageId) => {
+      const pluginPackage = packageById.get(packageId);
+      const existing = existingByPackage.get(packageId);
+      return {
+        ...(existing?.instance_id ? { instance_id: existing.instance_id } : {}),
+        package_id: packageId,
+        package_version: existing?.package_version || pluginPackage?.version,
+        display_name: existing?.display_name || pluginPackage?.name || packageId,
+        config: existing?.config || {},
+      };
+    });
+    const updated = await updateAgent(agent.id, {
+      name,
+      description,
+      plugin_ids: selectedPackageIds,
+      configs: Object.fromEntries(pluginInstances.map((instance) => [instance.package_id, instance.config])),
+      plugin_instances: pluginInstances,
+    });
+    if (activeAgentId === agent.id) {
+      await refreshAgentRuntime(agent.id);
+    }
+    return updated;
+  }
+
   async function saveCapabilityBindings(nextPartialBindings) {
     if (!activeAgentId || !nextPartialBindings || !Object.keys(nextPartialBindings).length) return;
     const nextBindings = { ...capabilityBindings, ...nextPartialBindings };
@@ -328,8 +403,10 @@ export default function App() {
   }
 
   async function savePluginConfig(instanceId, config) {
+    const label = pluginInstanceLabel(agentDetails, instanceId);
     setStatus('正在保存插件配置');
     setError('');
+    setToast({ message: `正在保存「${label}」配置`, variant: 'info' });
     try {
       const data = await api(`/api/plugin-instances/${instanceId}/config`, {
         method: 'PUT',
@@ -337,23 +414,29 @@ export default function App() {
       });
       setAgentDetails((current) => replaceInstance(current, data.plugin_instance));
       setStatus('插件配置已保存');
+      setToast({ message: `「${label}」配置已保存`, variant: 'success' });
       await refreshAgentRuntime();
     } catch (event) {
       setError(`保存失败：${event.message}`);
+      setToast({ message: `「${label}」保存失败：${event.message}`, variant: 'error' });
       setStatus('保存失败');
     }
   }
 
   async function restartPluginInstance(instanceId) {
+    const label = pluginInstanceLabel(agentDetails, instanceId);
     setStatus('正在重启插件实例');
     setError('');
+    setToast({ message: `正在重启「${label}」`, variant: 'info' });
     try {
       const data = await api(`/api/plugin-instances/${instanceId}/restart`, { method: 'POST', body: JSON.stringify({}) });
       setAgentDetails((current) => replaceInstance(current, data.plugin_instance));
       setStatus('插件实例已重启');
+      setToast({ message: `「${label}」已重启`, variant: 'success' });
       await refreshAgentRuntime();
     } catch (event) {
       setError(`重启失败：${event.message}`);
+      setToast({ message: `「${label}」重启失败：${event.message}`, variant: 'error' });
       setStatus('重启失败');
     }
   }
@@ -446,6 +529,7 @@ export default function App() {
   }
 
   const activeAgent = useMemo(() => agents.find((agent) => agent.id === activeAgentId), [agents, activeAgentId]);
+  const notification = error ? { message: error, variant: 'error' } : toast;
 
   return (
     <main className="app-shell">
@@ -463,9 +547,19 @@ export default function App() {
           <button className={view === 'market' ? 'nav-item active' : 'nav-item'} onClick={() => setView('market')}><Store size={17} /><span>插件市场</span></button>
         </nav>
         <div className="topbar-meta">
-          {error && <div className="topbar-notice">{error}</div>}
         </div>
       </header>
+      <NotificationToast
+        message={notification?.message}
+        variant={notification?.variant || 'info'}
+        onClose={() => {
+          if (error) {
+            setError('');
+          } else {
+            setToast(null);
+          }
+        }}
+      />
 
       <section className="app-main">
         {view === 'market' && <MarketPage packages={packages} apiBase={API_BASE} onMarketplaceChanged={refresh} />}
@@ -476,6 +570,7 @@ export default function App() {
             setActiveAgentId={setActiveAgentId}
             setView={setView}
             createAgent={createAgent}
+            updateAgent={updateAgentComposition}
             deleteAgent={requestDeleteAgent}
             packages={packages}
           />
@@ -535,6 +630,11 @@ function replaceInstance(agentDetails, pluginInstance) {
       instance.instance_id === pluginInstance.instance_id ? pluginInstance : instance
     )),
   };
+}
+
+function pluginInstanceLabel(agentDetails, instanceId) {
+  const instance = (agentDetails?.plugin_instances || []).find((item) => item.instance_id === instanceId);
+  return instance?.display_name || instance?.package_id || instanceId || '插件';
 }
 
 function normalizeChatMessage(message) {

@@ -1,3 +1,5 @@
+import { selectDefaultPackageVersions } from './plugins.js';
+
 export const API_BASE = import.meta.env.VITE_PLUGIN_AGENT_API || 'http://127.0.0.1:8000';
 
 export async function api(path, options = {}) {
@@ -179,10 +181,12 @@ function emitSseChunks(chunks, onEvent) {
 }
 
 export function createDefaultAgentPayload(name, description, packages, packageIds, configs) {
+  const defaultPackages = selectDefaultPackageVersions(packages);
   const pluginInstances = packageIds.map((packageId) => {
-    const pluginPackage = packages.find((item) => item.package_id === packageId);
+    const pluginPackage = defaultPackages.find((item) => item.package_id === packageId);
     return {
       package_id: packageId,
+      package_version: pluginPackage?.version,
       display_name: pluginPackage?.name || packageId,
       config: configs[packageId] || {},
     };

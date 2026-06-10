@@ -26,7 +26,7 @@ Build plugin-agent plugins as microkernel extensions. Keep the backend kernel pr
 - Declare secrets in the config schema with `x-secret: true` or `x-encrypted: true`; do not infer secrecy from field names.
 - If multiple providers can satisfy the same capability, require Agent-level `capability_bindings` instead of choosing implicitly.
 - Binding data belongs to the Agent assembly, not to plugin instance config.
-- Put new product plugins in `plugin-market/<plugin_folder>/` with `plugin.yaml`, `config.yaml`, and `plugin.py`; do not write plugin source directly into `.plugin-agent/installed-plugins/`.
+- Build new product plugins as uploadable package directories with `plugin.yaml`, optional `config.yaml`, and `plugin.py`; do not write plugin source directly into `.plugin-agent/installed-plugins/`.
 - Use built-in plugin layout under `backend/src/plugin_agent/plugins/` only for host compatibility/runtime plugins that must ship with the backend.
 
 ## Development Workflow
@@ -46,8 +46,9 @@ Build plugin-agent plugins as microkernel extensions. Keep the backend kernel pr
    - override `start()` only for setup that needs the kernel or filesystem.
    - override `after_start_all()` only when discovery depends on all active plugins.
    - implement `invoke()` with explicit capability branches and delegate unknown capabilities to `super().invoke(...)`.
-4. Place and register the plugin:
-   - for a new market plugin, add it under `plugin-market/` and include `runtime.type: python.in_process` plus `runtime.entrypoint: plugin.py:<PluginClass>` in `plugin.yaml`.
+4. Package and register the plugin:
+   - for a new product plugin, prepare an uploadable package directory and include `runtime.type: python.in_process` plus `runtime.entrypoint: plugin.py:<PluginClass>` in `plugin.yaml`.
+   - install product plugins through the frontend marketplace upload flow; treat `plugin-market/` as internal storage rather than user-facing instructions.
    - for a true built-in, add imports and entries to `PLUGIN_FACTORIES` in `backend/src/plugin_agent/assembly.py`.
    - add a built-in to `DEFAULT_AGENT_PLUGIN_IDS` only when it should participate in new default Agents.
    - update `frontend/src/lib/plugins.js` only if frontend labels or selection behavior need to change.

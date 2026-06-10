@@ -1,0 +1,63 @@
+descriptor:
+  id: context.compressor.summary
+  version: 1.1.0
+  name: 上下文摘要压缩
+  description: 将较长对话上下文压缩为简短摘要，供上下文管理插件继续编排。
+  categories:
+  - context
+  tags:
+  - 上下文
+  - 压缩
+  - 摘要
+  config_schema_ref: schema://context.compressor.summary.config.v1
+  provides:
+  - name: context.compressor.compress
+    version: 1.0.0
+    input_schema_ref: schema://context.compressor.compress.input.v1
+    output_schema_ref: schema://context.compressor.compress.output.v1
+resources:
+- kind: context
+  id: summary-compressor
+  title: Context Summary Compressor
+  description: Compresses transcript messages into a concise summary.
+  invoke_capability: context.compressor.compress
+  schema_refs:
+    input: schema://context.compressor.compress.input.v1
+    output: schema://context.compressor.compress.output.v1
+schemas:
+- schema_ref: schema://context.compressor.summary.config.v1
+  json_schema:
+    type: object
+    additionalProperties: false
+    properties:
+      max_summary_chars:
+        type: integer
+        title: Max Summary Chars
+        minimum: 100
+        maximum: 10000
+        default: 1200
+- schema_ref: schema://context.compressor.compress.input.v1
+  json_schema:
+    type: object
+    required:
+    - messages
+    additionalProperties: false
+    properties:
+      messages:
+        type: array
+        items:
+          type: object
+- schema_ref: schema://context.compressor.compress.output.v1
+  json_schema:
+    type: object
+    required:
+    - summary
+    additionalProperties: false
+    properties:
+      summary:
+        type: string
+      provider:
+        type: object
+runtime:
+  type: python.in_process
+  entrypoint: plugin.py:SummaryContextCompressorPlugin

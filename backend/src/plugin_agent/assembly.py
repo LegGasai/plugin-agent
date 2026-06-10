@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import os
 import shutil
 import sqlite3
@@ -24,6 +25,8 @@ from plugin_agent.plugin_store import (
     validate_plugin_package,
 )
 from plugin_agent.plugins.agent_loop_react.plugin import ReactAgentLoopPlugin
+from plugin_agent.plugins.context_compressor_summary.plugin import SummaryContextCompressorPlugin
+from plugin_agent.plugins.context_manager.plugin import ContextManagerPlugin
 from plugin_agent.plugins.mcp_bridge_plugin.plugin import MCPBridgePlugin
 from plugin_agent.plugins.memory_file.plugin import FileMemoryPlugin
 from plugin_agent.plugins.model_deepseek.plugin import DeepSeekModelPlugin
@@ -34,6 +37,7 @@ from plugin_agent.plugins.tool_basic.plugin import BasicToolPlugin
 from plugin_agent.plugins.tool_runtime_plugin.plugin import ToolRuntimePlugin
 
 PluginFactory = Callable[..., PluginBase]
+logger = logging.getLogger(__name__)
 
 DEFAULT_AGENT_PLUGIN_IDS = [
     "memory.file",
@@ -41,6 +45,8 @@ DEFAULT_AGENT_PLUGIN_IDS = [
     "model.openai_compatible",
     "tool.runtime",
     "tool.basic",
+    "context.compressor.summary",
+    "context.manager",
     "mcp.bridge",
     "agent.loop.react",
 ]
@@ -48,6 +54,8 @@ DEFAULT_AGENT_PLUGIN_IDS = [
 PLUGIN_FACTORIES: dict[str, PluginFactory] = {
     "memory.file": FileMemoryPlugin,
     "skill.registry": SkillRegistryPlugin,
+    "context.compressor.summary": SummaryContextCompressorPlugin,
+    "context.manager": ContextManagerPlugin,
     "model.openai_compatible": OpenAICompatibleModelPlugin,
     "model.openrouter": OpenRouterModelPlugin,
     "model.deepseek": DeepSeekModelPlugin,
@@ -71,6 +79,21 @@ def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]
     return result
 
 
+def _join_config_path(prefix: str, key: str) -> str:
+    return f"{prefix}.{key}" if prefix else key
+
+
+def _encrypted_path_matches(path: str, encrypted_paths: set[str]) -> bool:
+    path_parts = path.split(".") if path else []
+    for encrypted_path in encrypted_paths:
+        encrypted_parts = encrypted_path.split(".") if encrypted_path else []
+        if len(path_parts) != len(encrypted_parts):
+            continue
+        if all(expected == "*" or expected == actual for expected, actual in zip(encrypted_parts, path_parts)):
+            return True
+    return False
+
+
 def collect_encrypted_paths(schema: dict[str, Any], prefix: str = "") -> set[str]:
     encrypted: set[str] = set()
     if schema.get("x-encrypted") is True or schema.get("x-secret") is True:
@@ -78,22 +101,38 @@ def collect_encrypted_paths(schema: dict[str, Any], prefix: str = "") -> set[str
             encrypted.add(prefix)
     for key, child in (schema.get("properties") or {}).items():
         if isinstance(child, dict):
-            path = f"{prefix}.{key}" if prefix else key
+            path = _join_config_path(prefix, key)
             encrypted.update(collect_encrypted_paths(child, path))
+    additional_properties = schema.get("additionalProperties")
+    if isinstance(additional_properties, dict):
+        encrypted.update(collect_encrypted_paths(additional_properties, _join_config_path(prefix, "*")))
+    items = schema.get("items")
+    if isinstance(items, dict):
+        encrypted.update(collect_encrypted_paths(items, _join_config_path(prefix, "*")))
+    for variant_key in ("allOf", "anyOf", "oneOf"):
+        for variant in schema.get(variant_key) or []:
+            if isinstance(variant, dict):
+                encrypted.update(collect_encrypted_paths(variant, prefix))
     return encrypted
 
 
-def redact_config(config: dict[str, Any], encrypted_paths: set[str], prefix: str = "") -> dict[str, Any]:
-    redacted = {}
-    for key, value in config.items():
-        path = f"{prefix}.{key}" if prefix else key
-        if isinstance(value, dict):
-            redacted[key] = redact_config(value, encrypted_paths, path)
-        elif path in encrypted_paths:
-            redacted[key] = "********" if value else None
-        else:
-            redacted[key] = value
-    return redacted
+def redact_config(config: Any, encrypted_paths: set[str], prefix: str = "") -> Any:
+    if isinstance(config, dict):
+        redacted = {}
+        for key, value in config.items():
+            path = _join_config_path(prefix, str(key))
+            if isinstance(value, (dict, list)):
+                redacted[key] = redact_config(value, encrypted_paths, path)
+            elif _encrypted_path_matches(path, encrypted_paths):
+                redacted[key] = "********" if value else None
+            else:
+                redacted[key] = value
+        return redacted
+    if isinstance(config, list):
+        return [redact_config(value, encrypted_paths, _join_config_path(prefix, str(index))) for index, value in enumerate(config)]
+    if _encrypted_path_matches(prefix, encrypted_paths):
+        return "********" if config else None
+    return config
 
 
 def version_sort_key(version: str) -> tuple[int, Any]:
@@ -108,9 +147,13 @@ def latest_version(versions: list[str]) -> str:
 
 
 def select_default_package(packages: list[dict[str, Any]]) -> dict[str, Any]:
-    installed = [package for package in packages if package.get("source") == "installed"]
-    candidates = installed or packages
-    return max(candidates, key=lambda package: version_sort_key(str(package.get("version", "1.0.0"))))
+    return max(
+        packages,
+        key=lambda package: (
+            version_sort_key(str(package.get("version", "1.0.0"))),
+            1 if package.get("source") == "installed" else 0,
+        ),
+    )
 
 
 class SecretStore:
@@ -359,28 +402,7 @@ class ProductStore:
                 ),
             )
             for instance in instances:
-                conn.execute(
-                    """
-                    insert into plugin_instances(
-                        instance_id, agent_id, package_id, package_version, display_name, config_json, secret_refs_json,
-                        state, generation, enabled, created_at, updated_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        instance["instance_id"],
-                        instance["agent_id"],
-                        instance["package_id"],
-                        instance["package_version"],
-                        instance["display_name"],
-                        json.dumps(instance["config"], ensure_ascii=False),
-                        json.dumps(instance["secret_refs"], ensure_ascii=False),
-                        instance["state"],
-                        instance["generation"],
-                        1 if instance["enabled"] else 0,
-                        instance["created_at"],
-                        instance["updated_at"],
-                    ),
-                )
+                self._insert_plugin_instance(conn, instance)
 
     def list_agents(self) -> list[dict[str, Any]]:
         with self.connect() as conn:
@@ -404,6 +426,34 @@ class ProductStore:
             conn.execute(
                 "update agents set name=?, description=?, updated_at=? where agent_id=?",
                 (next_name, next_description, updated_at, agent_id),
+            )
+        return self.get_agent(agent_id)
+
+    def replace_agent_instances(
+        self,
+        agent_id: str,
+        instances: list[dict[str, Any]],
+        entry_loop_instance_id: str | None,
+        capability_bindings: dict[str, str],
+    ) -> dict[str, Any]:
+        self.get_agent(agent_id)
+        updated_at = now_iso()
+        with self.connect() as conn:
+            conn.execute("delete from plugin_instances where agent_id=?", (agent_id,))
+            for instance in instances:
+                self._insert_plugin_instance(conn, instance)
+            conn.execute(
+                """
+                update agents
+                set entry_loop_instance_id=?, capability_bindings_json=?, updated_at=?
+                where agent_id=?
+                """,
+                (
+                    entry_loop_instance_id,
+                    json.dumps(capability_bindings, ensure_ascii=False),
+                    updated_at,
+                    agent_id,
+                ),
             )
         return self.get_agent(agent_id)
 
@@ -592,6 +642,30 @@ class ProductStore:
         data["enabled"] = bool(data["enabled"])
         return data
 
+    def _insert_plugin_instance(self, conn: sqlite3.Connection, instance: dict[str, Any]) -> None:
+        conn.execute(
+            """
+            insert into plugin_instances(
+                instance_id, agent_id, package_id, package_version, display_name, config_json, secret_refs_json,
+                state, generation, enabled, created_at, updated_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                instance["instance_id"],
+                instance["agent_id"],
+                instance["package_id"],
+                instance["package_version"],
+                instance["display_name"],
+                json.dumps(instance["config"], ensure_ascii=False),
+                json.dumps(instance["secret_refs"], ensure_ascii=False),
+                instance["state"],
+                instance["generation"],
+                1 if instance["enabled"] else 0,
+                instance["created_at"],
+                instance["updated_at"],
+            ),
+        )
+
     def _row_to_session_message(self, row: sqlite3.Row) -> dict[str, Any]:
         data = dict(row)
         data["metadata"] = json.loads(data.pop("metadata_json") or "{}")
@@ -632,10 +706,11 @@ class AgentAssemblyService:
         self.store = ProductStore(self.runtime_dir)
         self.plugin_config_overrides: dict[str, dict[str, Any]] = {}
         self.refresh_plugin_packages()
+        logger.info("Agent assembly initialized runtime_dir=%s market_dir=%s", self.runtime_dir, self.market_dir)
 
     def refresh_plugin_packages(self) -> dict[str, Any]:
         for package_id in sorted(PLUGIN_FACTORIES):
-            plugin = self.instantiate_plugin(package_id)
+            plugin = PLUGIN_FACTORIES[package_id](self.plugin_config_overrides.get(package_id) or None)
             self.store.upsert_package(plugin.package_model())
         for package in discover_installed_packages(self.installed_plugins_dir):
             self.store.upsert_package(package)
@@ -651,21 +726,44 @@ class AgentAssemblyService:
         return packages
 
     def list_installed_plugin_packages(self, tag: str | None = None) -> list[dict[str, Any]]:
-        return self.list_plugin_packages(tag=tag)
+        packages_by_id: dict[str, list[dict[str, Any]]] = {}
+        for package in self.store.list_packages():
+            packages_by_id.setdefault(package["package_id"], []).append(package)
+        packages = [
+            select_default_package(packages)
+            for packages in packages_by_id.values()
+        ]
+        if tag:
+            packages = [package for package in packages if tag in package.get("tags", [])]
+        return sorted(packages, key=lambda package: (package["package_id"], version_sort_key(str(package.get("version", "1.0.0")))))
 
     def list_market_plugin_packages(self, tag: str | None = None) -> list[dict[str, Any]]:
-        installed_keys = {
-            (package["package_id"], package.get("version", "1.0.0"))
+        active_packages = {
+            package["package_id"]: package
             for package in self.list_installed_plugin_packages()
         }
+        all_market_packages = discover_market_packages(self.market_dir)
+        latest_market_versions: dict[str, str] = {}
+        for package in all_market_packages:
+            current = latest_market_versions.get(package.package_id)
+            if current is None or version_sort_key(package.version) > version_sort_key(current):
+                latest_market_versions[package.package_id] = package.version
         market_packages = []
-        for package in discover_market_packages(self.market_dir):
+        for package in all_market_packages:
             if tag and tag not in package.tags:
                 continue
             data = package.model_dump()
-            data["installed"] = (package.package_id, package.version) in installed_keys
+            active_package = active_packages.get(package.package_id)
+            installed_version = str(active_package.get("version", "1.0.0")) if active_package else None
+            latest_version = latest_market_versions.get(package.package_id, package.version)
+            data["installed"] = installed_version == package.version
+            data["installed_version"] = installed_version
+            data["installed_source"] = active_package.get("source") if active_package else None
+            data["latest_version"] = latest_version
+            data["has_newer_version"] = version_sort_key(package.version) < version_sort_key(latest_version)
+            data["update_available"] = installed_version is not None and version_sort_key(installed_version) < version_sort_key(latest_version)
             market_packages.append(data)
-        return market_packages
+        return sorted(market_packages, key=lambda package: (package["package_id"], version_sort_key(str(package.get("version", "1.0.0")))))
 
     def list_plugin_catalog(self) -> list[dict[str, Any]]:
         plugins = []
@@ -688,6 +786,7 @@ class AgentAssemblyService:
         if not path:
             raise ValueError("path is required")
         package, market_path = copy_package_to_market(path, self.market_dir)
+        logger.info("Plugin package uploaded to marketplace package_id=%s version=%s", package.package_id, package.version)
         return {"plugin_package": package.model_dump(), "market_path": str(market_path)}
 
     def install_market_plugin(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -698,6 +797,8 @@ class AgentAssemblyService:
         market_package = self._find_market_package(package_id, version)
         package, installed_path = install_market_package(Path(market_package.market_path or ""), self.installed_plugins_dir)
         self.store.upsert_package(package)
+        self._prune_other_installed_versions(package.package_id, package.version)
+        logger.info("Plugin package installed package_id=%s version=%s", package.package_id, package.version)
         return {"plugin_package": package.model_dump(), "installed_path": str(installed_path)}
 
     def uninstall_installed_plugin(self, package_id: str, version: str | None = None) -> dict[str, Any]:
@@ -719,6 +820,7 @@ class AgentAssemblyService:
         self.store.delete_package(package_id, version)
         if package_id in PLUGIN_FACTORIES:
             self.store.upsert_package(self.instantiate_plugin(package_id).package_model())
+        logger.info("Plugin package uninstalled package_id=%s version=%s", package_id, version)
         return {"plugin_package": package, "uninstalled": True}
 
     def validate_plugin(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -752,6 +854,7 @@ class AgentAssemblyService:
             "updated_at": stamp,
         }
         self.store.create_agent(agent, instances)
+        logger.info("Agent created agent_id=%s plugin_instances=%d", agent_id, len(instances))
         return self._describe_agent(agent, instances)
 
     def list_agents(self) -> list[dict[str, Any]]:
@@ -761,8 +864,35 @@ class AgentAssemblyService:
         agent = self.store.get_agent(agent_id)
         return self._describe_agent(agent, self.store.list_instances(agent_id))
 
-    def update_agent(self, agent_id: str, name: str | None = None, description: str | None = None) -> dict[str, Any]:
+    def update_agent(
+        self,
+        agent_id: str,
+        name: str | None = None,
+        description: str | None = None,
+        plugin_instances: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         agent = self.store.update_agent(agent_id, name=name, description=description)
+        if plugin_instances is None:
+            return self._describe_agent(agent, self.store.list_instances(agent_id))
+
+        if not isinstance(plugin_instances, list):
+            raise ValueError("plugin_instances must be a list")
+        existing_instances = self.store.list_instances(agent_id)
+        prepared_specs = self._prepare_instance_specs_for_update(agent_id, plugin_instances, existing_instances)
+        instances = [self._create_instance_record(agent_id, spec) for spec in prepared_specs]
+        entry_loop = self._find_entry_loop(instances)
+        valid_instance_ids = {instance["instance_id"] for instance in instances}
+        capability_bindings = {
+            capability: provider_instance_id
+            for capability, provider_instance_id in agent.get("capability_bindings", {}).items()
+            if provider_instance_id in valid_instance_ids
+        }
+        agent = self.store.replace_agent_instances(
+            agent_id,
+            instances,
+            entry_loop["instance_id"] if entry_loop else None,
+            capability_bindings,
+        )
         return self._describe_agent(agent, self.store.list_instances(agent_id))
 
     def update_agent_capability_bindings(self, agent_id: str, capability_bindings: dict[str, str]) -> dict[str, Any]:
@@ -772,10 +902,13 @@ class AgentAssemblyService:
 
     def delete_agent(self, agent_id: str) -> dict[str, Any]:
         self.store.delete_agent(agent_id)
+        logger.info("Agent deleted agent_id=%s", agent_id)
         return {"deleted": True, "agent_id": agent_id}
 
     def create_session(self, agent_id: str, title: str | None = None) -> dict[str, Any]:
-        return self.store.create_session(agent_id, title)
+        session = self.store.create_session(agent_id, title)
+        logger.info("Session created agent_id=%s session_id=%s", agent_id, session["session_id"])
+        return session
 
     def list_sessions(self, agent_id: str) -> list[dict[str, Any]]:
         return self.store.list_sessions(agent_id)
@@ -785,6 +918,7 @@ class AgentAssemblyService:
 
     def delete_session(self, session_id: str) -> dict[str, Any]:
         self.store.delete_session(session_id)
+        logger.info("Session deleted session_id=%s", session_id)
         return {"deleted": True, "session_id": session_id}
 
     def list_session_messages(self, session_id: str) -> list[dict[str, Any]]:
@@ -832,9 +966,11 @@ class AgentAssemblyService:
         kernel = self.build_kernel_for_agent(agent_id)
         session = self._ensure_session(agent_id, session_id)
         history = self._history_for_session(session["session_id"])
+        logger.info("Agent run started agent_id=%s session_id=%s", agent_id, session["session_id"])
         self.store.append_session_message(session["session_id"], "user", message)
         result = kernel.invoke("agent.run", {"message": message}, {"agent_id": agent_id, "session_id": session["session_id"], "history_messages": history}).payload
         self.store.append_session_message(session["session_id"], "assistant", result.get("answer", ""), result)
+        logger.info("Agent run completed agent_id=%s session_id=%s", agent_id, session["session_id"])
         return {**result, "session_id": session["session_id"]}
 
     def get_plugin_config(self, plugin_id: str, redact: bool = True) -> dict[str, Any]:
@@ -860,7 +996,9 @@ class AgentAssemblyService:
         return self._describe_instance(updated)
 
     def restart_plugin_instance(self, instance_id: str) -> dict[str, Any]:
-        return self._describe_instance(self.store.restart_instance(instance_id))
+        restarted = self.store.restart_instance(instance_id)
+        logger.info("Plugin instance restarted instance_id=%s generation=%s", instance_id, restarted.get("generation"))
+        return self._describe_instance(restarted)
 
     def build_kernel_for_agent(self, agent_id: str) -> AgentKernel:
         agent = self.store.get_agent(agent_id)
@@ -895,15 +1033,18 @@ class AgentAssemblyService:
         kernel = self.build_kernel_for_agent(agent_id)
         session = self._ensure_session(agent_id, session_id)
         history = self._history_for_session(session["session_id"])
+        logger.info("Agent stream started agent_id=%s session_id=%s", agent_id, session["session_id"])
         self.store.append_session_message(session["session_id"], "user", message)
         for event in kernel.stream("agent.stream", {"message": message}, {"agent_id": agent_id, "session_id": session["session_id"], "history_messages": history}):
             if event["type"] == "run_completed":
                 self.store.append_session_message(session["session_id"], "assistant", event.get("payload", {}).get("answer", ""), event.get("payload", {}))
                 event = {**event, "payload": {**event.get("payload", {}), "session_id": session["session_id"]}}
+                logger.info("Agent stream completed agent_id=%s session_id=%s", agent_id, session["session_id"])
             elif event["type"] == "run_failed":
                 payload = event.get("payload", {})
                 self.store.append_session_message(session["session_id"], "assistant", payload.get("answer") or payload.get("error") or "运行失败", payload)
                 event = {**event, "payload": {**payload, "session_id": session["session_id"]}}
+                logger.warning("Agent stream failed agent_id=%s session_id=%s", agent_id, session["session_id"])
             yield event
 
     def instantiate_plugin(
@@ -977,6 +1118,15 @@ class AgentAssemblyService:
             plugins.append(plugin)
         kernel.load_plugins(plugins)
         kernel.start_all(raise_on_failed=raise_on_failed)
+        if kernel.runtime_status != "ready":
+            logger.warning(
+                "Agent kernel built with status=%s agent_id=%s diagnostics=%s",
+                kernel.runtime_status,
+                agent_id,
+                [diagnostic.code for diagnostic in kernel.diagnostics],
+            )
+        else:
+            logger.debug("Agent kernel built agent_id=%s plugins=%d", agent_id, len(plugins))
         return kernel
 
     def _describe_assembly(self, kernel: AgentKernel) -> dict[str, Any]:
@@ -1003,6 +1153,65 @@ class AgentAssemblyService:
             candidates = candidates_by_capability.get(capability, set())
             if provider_instance_id not in candidates:
                 raise ValueError(f"{capability} cannot be bound to {provider_instance_id}: provider is not installed in this Agent")
+
+    def _prepare_instance_specs_for_update(
+        self,
+        agent_id: str,
+        specs: list[dict[str, Any]],
+        existing_instances: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        existing_by_id = {instance["instance_id"]: instance for instance in existing_instances}
+        existing_by_package: dict[str, list[dict[str, Any]]] = {}
+        for instance in existing_instances:
+            existing_by_package.setdefault(instance["package_id"], []).append(instance)
+
+        prepared = []
+        used_existing_ids: set[str] = set()
+        for spec in specs:
+            if not isinstance(spec, dict):
+                raise ValueError("plugin instance specs must be objects")
+            package_id = spec.get("package_id")
+            if not isinstance(package_id, str) or not package_id.strip():
+                raise ValueError("plugin instance package_id is required")
+            package_id = package_id.strip()
+            existing = None
+            instance_id = spec.get("instance_id")
+            if isinstance(instance_id, str):
+                candidate = existing_by_id.get(instance_id)
+                if candidate and candidate["package_id"] == package_id:
+                    existing = candidate
+            if existing is None:
+                existing = next(
+                    (
+                        candidate
+                        for candidate in existing_by_package.get(package_id, [])
+                        if candidate["instance_id"] not in used_existing_ids
+                    ),
+                    None,
+                )
+            if existing:
+                used_existing_ids.add(existing["instance_id"])
+
+            package_version = spec.get("package_version") or spec.get("version") or existing.get("package_version") if existing else spec.get("package_version") or spec.get("version")
+            package = self.store.get_package(package_id, package_version)
+            package_version = str(package.get("version", "1.0.0"))
+            encrypted_paths = self._encrypted_config_paths(package_id, package_version)
+            existing_config = self._hydrate_config(existing["config"], existing.get("secret_refs", {})) if existing else {}
+            sanitized_config = self._strip_redacted_secret_placeholders(dict(spec.get("config") or {}), encrypted_paths)
+            merged_config = deep_merge(existing_config, sanitized_config)
+
+            prepared.append(
+                {
+                    "instance_id": existing["instance_id"] if existing else spec.get("instance_id"),
+                    "package_id": package_id,
+                    "package_version": package_version,
+                    "display_name": spec.get("display_name") or (existing.get("display_name") if existing else package["name"]),
+                    "config": merged_config,
+                    "generation": existing.get("generation", 1) if existing else spec.get("generation", 1),
+                    "enabled": existing.get("enabled", True) if existing else spec.get("enabled", True),
+                }
+            )
+        return prepared
 
     def _create_instance_record(self, agent_id: str, spec: dict[str, Any], persist_secrets: bool = True) -> dict[str, Any]:
         package_id = spec["package_id"]
@@ -1089,30 +1298,52 @@ class AgentAssemblyService:
             "updated_at": instance["updated_at"],
         }
 
-    def _strip_redacted_secret_placeholders(self, config: dict[str, Any], encrypted_paths: set[str], prefix: str = "") -> dict[str, Any]:
+    def _strip_redacted_secret_placeholders(self, config: Any, encrypted_paths: set[str], prefix: str = "") -> Any:
+        if isinstance(config, list):
+            return [
+                self._strip_redacted_secret_placeholders(value, encrypted_paths, _join_config_path(prefix, str(index)))
+                for index, value in enumerate(config)
+            ]
+        if not isinstance(config, dict):
+            return config
         clean: dict[str, Any] = {}
         for key, value in config.items():
-            path = f"{prefix}.{key}" if prefix else key
-            if isinstance(value, dict):
+            path = _join_config_path(prefix, str(key))
+            if isinstance(value, (dict, list)):
                 child = self._strip_redacted_secret_placeholders(value, encrypted_paths, path)
-                if child or path not in encrypted_paths:
+                if child or not _encrypted_path_matches(path, encrypted_paths):
                     clean[key] = child
-            elif path in encrypted_paths and value == "********":
+            elif _encrypted_path_matches(path, encrypted_paths) and value == "********":
                 continue
             else:
                 clean[key] = value
         return clean
 
-    def _split_config_secrets(self, config: dict[str, Any], encrypted_paths: set[str], persist: bool = True, prefix: str = "") -> tuple[dict[str, Any], dict[str, str]]:
+    def _split_config_secrets(self, config: Any, encrypted_paths: set[str], persist: bool = True, prefix: str = "") -> tuple[Any, dict[str, str]]:
+        if isinstance(config, list):
+            clean_items = []
+            refs: dict[str, str] = {}
+            for index, value in enumerate(config):
+                path = _join_config_path(prefix, str(index))
+                child_config, child_refs = self._split_config_secrets(value, encrypted_paths, persist=persist, prefix=path)
+                clean_items.append(child_config)
+                refs.update(child_refs)
+            return clean_items, refs
+        if not isinstance(config, dict):
+            if _encrypted_path_matches(prefix, encrypted_paths) and config:
+                if persist:
+                    return None, {prefix: self.store.save_secret(str(config))}
+                return config, {}
+            return config, {}
         clean: dict[str, Any] = {}
         refs: dict[str, str] = {}
         for key, value in config.items():
-            path = f"{prefix}.{key}" if prefix else key
-            if isinstance(value, dict):
+            path = _join_config_path(prefix, str(key))
+            if isinstance(value, (dict, list)):
                 child_config, child_refs = self._split_config_secrets(value, encrypted_paths, persist=persist, prefix=path)
                 clean[key] = child_config
                 refs.update(child_refs)
-            elif path in encrypted_paths and value:
+            elif _encrypted_path_matches(path, encrypted_paths) and value:
                 if persist:
                     refs[path] = self.store.save_secret(str(value))
                 else:
@@ -1121,14 +1352,20 @@ class AgentAssemblyService:
                 clean[key] = value
         return clean, refs
 
-    def _hydrate_config(self, config: dict[str, Any], secret_refs: dict[str, str], reveal: bool = True) -> dict[str, Any]:
+    def _hydrate_config(self, config: Any, secret_refs: dict[str, str], reveal: bool = True) -> Any:
         hydrated = json.loads(json.dumps(config))
         for path, secret_id in secret_refs.items():
             target = hydrated
             parts = path.split(".")
             for part in parts[:-1]:
-                target = target.setdefault(part, {})
-            target[parts[-1]] = self.store.read_secret(secret_id) if reveal else "********"
+                if isinstance(target, list):
+                    target = target[int(part)]
+                else:
+                    target = target.setdefault(part, {})
+            if isinstance(target, list):
+                target[int(parts[-1])] = self.store.read_secret(secret_id) if reveal else "********"
+            else:
+                target[parts[-1]] = self.store.read_secret(secret_id) if reveal else "********"
         return hydrated
 
     def _default_instance_config(self, package_id: str, package_version: str | None = None) -> dict[str, Any]:
@@ -1169,4 +1406,19 @@ class AgentAssemblyService:
         ]
         if not matches:
             raise KeyError(f"unknown market plugin package: {package_id}")
-        return matches[-1]
+        return max(matches, key=lambda package: version_sort_key(package.version))
+
+    def _prune_other_installed_versions(self, package_id: str, keep_version: str) -> None:
+        for package in self.store.list_packages():
+            version = str(package.get("version", "1.0.0"))
+            if package.get("package_id") != package_id or package.get("source") != "installed" or version == keep_version:
+                continue
+            if self.store.count_instances_for_package(package_id, version):
+                continue
+            installed_path = package.get("installed_path")
+            if installed_path:
+                path = Path(installed_path).expanduser().resolve()
+                installed_root = self.installed_plugins_dir.resolve()
+                if path.exists() and path.is_relative_to(installed_root):
+                    shutil.rmtree(path)
+            self.store.delete_package(package_id, version)

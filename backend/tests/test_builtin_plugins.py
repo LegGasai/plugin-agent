@@ -1,5 +1,6 @@
 
 from plugin_agent.kernel import build_default_kernel
+from plugin_agent.assembly import AgentAssemblyService
 
 
 def test_tool_invoke_calls_builtin_echo_time_and_math():
@@ -57,3 +58,31 @@ def test_default_plugins_are_loaded_from_plugin_folders_with_manifests():
         assert plugin.config
 
     assert kernel.plugins["agent.loop.react"].config["limits"]["max_turns"] == 8
+
+
+def test_context_manager_routes_compression_to_compressor_plugin(tmp_path):
+    assembly = AgentAssemblyService(runtime_dir=tmp_path)
+    kernel = assembly.build_kernel(["context.manager", "context.compressor.summary"])
+
+    result = kernel.invoke(
+        "context.compress",
+        {
+            "messages": [
+                {"role": "user", "content": "first request"},
+                {"role": "assistant", "content": "first answer"},
+                {"role": "user", "content": "current request"},
+            ],
+            "model_messages": [
+                {"role": "user", "content": "first request"},
+                {"role": "assistant", "content": "first answer"},
+                {"role": "user", "content": "current request"},
+            ],
+        },
+        {"agent_id": "agent-test", "session_id": "session-test"},
+    ).payload
+
+    assert result["provider_capability"] == "context.compressor.compress"
+    assert "first request" in result["summary"]
+    assert result["messages"][0]["role"] == "system"
+    assert result["messages"][0]["metadata"]["compressed_by"] == "context.manager"
+    assert result["model_messages"][0]["role"] == "system"

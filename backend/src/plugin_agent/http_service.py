@@ -3,6 +3,7 @@ from __future__ import annotations
 from email import policy
 from email.parser import BytesParser
 import json
+import logging
 import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -12,6 +13,8 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from plugin_agent.assembly import AgentAssemblyService
 from plugin_agent.kernel import KernelInvokeError
+
+logger = logging.getLogger(__name__)
 
 
 class AppState:
@@ -84,8 +87,10 @@ class PluginAgentRequestHandler(BaseHTTPRequestHandler):
         except KeyError as exc:
             self._send_error(404, str(exc))
         except KernelInvokeError as exc:
+            logger.warning("GET %s failed with kernel error: %s", path, exc.error.get("code"))
             self._send_json({"error": exc.error["message"], "error_detail": exc.error}, status=500)
         except Exception as exc:
+            logger.exception("GET %s failed", path)
             self._send_error(500, str(exc))
 
     def do_POST(self) -> None:
@@ -143,8 +148,10 @@ class PluginAgentRequestHandler(BaseHTTPRequestHandler):
         except KeyError as exc:
             self._send_error(404, str(exc))
         except KernelInvokeError as exc:
+            logger.warning("POST %s failed with kernel error: %s", path, exc.error.get("code"))
             self._send_json({"error": exc.error["message"], "error_detail": exc.error}, status=500)
         except Exception as exc:
+            logger.exception("POST %s failed", path)
             self._send_error(500, str(exc))
 
     def do_PUT(self) -> None:
@@ -165,6 +172,7 @@ class PluginAgentRequestHandler(BaseHTTPRequestHandler):
                     agent_id,
                     name=payload.get("name"),
                     description=payload.get("description"),
+                    plugin_instances=payload.get("plugin_instances"),
                 )
                 self._send_json({"agent": agent})
             elif path.startswith(instance_prefix) and path.endswith(suffix):
@@ -180,8 +188,10 @@ class PluginAgentRequestHandler(BaseHTTPRequestHandler):
         except KeyError as exc:
             self._send_error(404, str(exc))
         except KernelInvokeError as exc:
+            logger.warning("PUT %s failed with kernel error: %s", path, exc.error.get("code"))
             self._send_json({"error": exc.error["message"], "error_detail": exc.error}, status=500)
         except Exception as exc:
+            logger.exception("PUT %s failed", path)
             self._send_error(500, str(exc))
 
     def do_DELETE(self) -> None:
@@ -204,6 +214,7 @@ class PluginAgentRequestHandler(BaseHTTPRequestHandler):
         except KeyError as exc:
             self._send_error(404, str(exc))
         except Exception as exc:
+            logger.exception("DELETE %s failed", path)
             self._send_error(500, str(exc))
 
     def _read_json(self) -> dict[str, Any]:
@@ -303,8 +314,10 @@ class PluginAgentRequestHandler(BaseHTTPRequestHandler):
                 self.wfile.write(f"event: {event['type']}\ndata: {data}\n\n".encode("utf-8"))
                 self.wfile.flush()
         except BrokenPipeError:
+            logger.info("SSE client disconnected: %s", self.path)
             return
         except Exception as exc:
+            logger.exception("SSE stream failed: %s", self.path)
             error = exc.error if isinstance(exc, KernelInvokeError) else str(exc)
             event = {"type": "run_failed", "sequence": -1, "run_id": "http-stream", "payload": {"error": error}}
             data = json.dumps(event, ensure_ascii=False)
@@ -317,7 +330,7 @@ class PluginAgentRequestHandler(BaseHTTPRequestHandler):
         self._send_json({"error": message}, status=status)
 
     def log_message(self, format: str, *args: Any) -> None:
-        return
+        logger.info("%s - %s", self.address_string(), format % args)
 
 
 class PluginAgentHTTPServerImpl(ThreadingHTTPServer):
@@ -340,9 +353,11 @@ class PluginAgentHTTPServer:
     def start(self) -> None:
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
+        logger.info("Plugin Agent HTTP service started at %s", self.base_url)
 
     def stop(self) -> None:
         self.server.shutdown()
         self.server.server_close()
         if self.thread:
             self.thread.join(timeout=2)
+        logger.info("Plugin Agent HTTP service stopped at %s", self.base_url)

@@ -3,7 +3,7 @@ import urllib.error
 import urllib.request
 
 from plugin_agent.http_service import PluginAgentHTTPServer, create_app_state
-from plugin_agent.assembly import collect_encrypted_paths
+from plugin_agent.assembly import collect_encrypted_paths, deep_merge, redact_config
 
 
 def request_json(base_url, method, path, payload=None):
@@ -33,6 +33,8 @@ def test_plugin_packages_and_agent_instances_are_persisted_in_sqlite(tmp_path):
         readable_names = {package["package_id"]: package["name"] for package in packages}
         assert readable_names == {
             "agent.loop.react": "ReAct 智能体循环",
+            "context.compressor.summary": "上下文摘要压缩",
+            "context.manager": "上下文管理器",
             "mcp.bridge": "MCP 桥接器",
             "memory.file": "文件记忆",
             "model.deepseek": "DeepSeek 模型",
@@ -146,6 +148,64 @@ def test_redacted_secret_placeholder_does_not_overwrite_real_secret(tmp_path):
 
         assert updated["config"]["api_key"] == "********"
         assert updated["config"]["model"] == "second-model"
+        stored = state.assembly.store.get_instance(model_instance["instance_id"])
+        hydrated = state.assembly._hydrate_config(stored["config"], stored["secret_refs"])
+        assert hydrated["api_key"] == "real-secret"
+        assert hydrated["model"] == "second-model"
+    finally:
+        server.stop()
+
+
+def test_agent_update_can_replace_plugin_instances_and_preserve_existing_config(tmp_path):
+    state = create_app_state(runtime_dir=tmp_path)
+    server = PluginAgentHTTPServer(state=state, host="127.0.0.1", port=0)
+    server.start()
+    try:
+        base = server.base_url
+        created = request_json(
+            base,
+            "POST",
+            "/api/agents",
+            {
+                "name": "Editable Agent",
+                "plugin_instances": [
+                    {"package_id": "memory.file", "config": {"path": str(tmp_path / "editable-memory.jsonl")}},
+                    {"package_id": "model.openai_compatible", "config": {"api_key": "real-secret", "model": "first-model"}},
+                    {"package_id": "agent.loop.react"},
+                ],
+            },
+        )["agent"]
+        model_instance = next(instance for instance in created["plugin_instances"] if instance["package_id"] == "model.openai_compatible")
+
+        updated = request_json(
+            base,
+            "PUT",
+            f"/api/agents/{created['id']}",
+            {
+                "name": "Edited Agent",
+                "description": "Updated from the square",
+                "plugin_instances": [
+                    {
+                        "instance_id": model_instance["instance_id"],
+                        "package_id": "model.openai_compatible",
+                        "package_version": model_instance["package_version"],
+                        "display_name": model_instance["display_name"],
+                        "config": {"api_key": "********", "model": "second-model"},
+                    },
+                    {"package_id": "tool.runtime"},
+                    {"package_id": "agent.loop.react"},
+                ],
+            },
+        )["agent"]
+
+        assert updated["name"] == "Edited Agent"
+        assert updated["description"] == "Updated from the square"
+        assert updated["plugin_ids"] == ["model.openai_compatible", "tool.runtime", "agent.loop.react"]
+        updated_model = next(instance for instance in updated["plugin_instances"] if instance["package_id"] == "model.openai_compatible")
+        assert updated_model["instance_id"] == model_instance["instance_id"]
+        assert updated_model["config"]["api_key"] == "********"
+        assert updated_model["config"]["model"] == "second-model"
+
         stored = state.assembly.store.get_instance(model_instance["instance_id"])
         hydrated = state.assembly._hydrate_config(stored["config"], stored["secret_refs"])
         assert hydrated["api_key"] == "real-secret"
@@ -313,6 +373,53 @@ def test_agent_runtime_reports_model_provider_missing_required_config(tmp_path):
         server.stop()
 
 
+def test_context_manager_dependency_and_hot_restart_are_visible(tmp_path):
+    state = create_app_state(runtime_dir=tmp_path)
+    server = PluginAgentHTTPServer(state=state, host="127.0.0.1", port=0)
+    server.start()
+    try:
+        base = server.base_url
+        missing = request_json(
+            base,
+            "POST",
+            "/api/agents",
+            {"name": "Missing Context Provider", "plugin_ids": ["context.manager"]},
+        )["agent"]
+        missing_runtime = request_json(base, "GET", f"/api/agents/{missing['id']}/runtime")
+        assert missing_runtime["status"] == "failed"
+        assert any(
+            diagnostic["code"] == "missing_dependency"
+            and diagnostic["plugin_id"] == "context.manager"
+            and diagnostic["capability"] == "context.compressor.compress"
+            for diagnostic in missing_runtime["diagnostics"]
+        )
+
+        composed = request_json(
+            base,
+            "POST",
+            "/api/agents",
+            {
+                "name": "Composable Context Agent",
+                "plugin_instances": [
+                    {"package_id": "context.compressor.summary", "instance_id": "summary-compressor"},
+                    {"package_id": "context.manager", "instance_id": "context-manager"},
+                ],
+            },
+        )["agent"]
+        runtime = request_json(base, "GET", f"/api/agents/{composed['id']}/runtime")
+        assert runtime["status"] == "ready"
+        assert "summary-compressor" in runtime["startup_order"]
+        assert "context-manager" in runtime["startup_order"]
+
+        compressor = next(instance for instance in composed["plugin_instances"] if instance["package_id"] == "context.compressor.summary")
+        restarted = request_json(base, "POST", f"/api/plugin-instances/{compressor['instance_id']}/restart")["plugin_instance"]
+        assert restarted["generation"] == compressor["generation"] + 1
+        runtime = request_json(base, "GET", f"/api/agents/{composed['id']}/runtime")
+        assert runtime["status"] == "ready"
+    finally:
+        server.stop()
+
+
 def test_encrypted_config_paths_are_declared_by_schema():
     schema = {
         "type": "object",
@@ -329,6 +436,64 @@ def test_encrypted_config_paths_are_declared_by_schema():
     }
 
     assert collect_encrypted_paths(schema) == {"credential", "nested.token_value"}
+
+
+def test_dynamic_secret_config_paths_are_encrypted_redacted_and_preserved(tmp_path):
+    state = create_app_state(runtime_dir=tmp_path)
+    schema = {
+        "type": "object",
+        "properties": {
+            "endpoints": {
+                "type": "object",
+                "additionalProperties": {
+                    "type": "object",
+                    "properties": {
+                        "secret_headers": {
+                            "type": "object",
+                            "additionalProperties": {"type": "string", "x-secret": True},
+                        },
+                        "headers": {
+                            "type": "object",
+                            "additionalProperties": {"type": "string"},
+                        },
+                    },
+                },
+            },
+        },
+    }
+    encrypted_paths = collect_encrypted_paths(schema)
+    config = {
+        "endpoints": {
+            "notify": {
+                "headers": {"Content-Type": "application/json"},
+                "secret_headers": {"Authorization": "Bearer real-secret"},
+            }
+        }
+    }
+
+    assert encrypted_paths == {"endpoints.*.secret_headers.*"}
+    assert redact_config(config, encrypted_paths)["endpoints"]["notify"]["secret_headers"]["Authorization"] == "********"
+
+    stored_config, secret_refs = state.assembly._split_config_secrets(config, encrypted_paths)
+    assert stored_config["endpoints"]["notify"]["secret_headers"] == {}
+    assert set(secret_refs) == {"endpoints.notify.secret_headers.Authorization"}
+
+    hydrated = state.assembly._hydrate_config(stored_config, secret_refs)
+    assert hydrated["endpoints"]["notify"]["secret_headers"]["Authorization"] == "Bearer real-secret"
+
+    sanitized = state.assembly._strip_redacted_secret_placeholders(
+        {
+            "endpoints": {
+                "notify": {
+                    "headers": {"Content-Type": "application/json; charset=utf-8"},
+                    "secret_headers": {"Authorization": "********"},
+                }
+            }
+        },
+        encrypted_paths,
+    )
+    merged = deep_merge(state.assembly._hydrate_config(stored_config, secret_refs), sanitized)
+    assert merged["endpoints"]["notify"]["secret_headers"]["Authorization"] == "Bearer real-secret"
 
 
 def test_refresh_plugin_packages_removes_stale_builtin_packages(tmp_path):

@@ -10,6 +10,7 @@ from rich.table import Table
 from plugin_agent.assembly import AgentAssemblyService
 from plugin_agent.http_service import PluginAgentHTTPServer, create_app_state
 from plugin_agent.kernel import build_default_kernel
+from plugin_agent.logging_config import configure_logging
 
 app = typer.Typer(help="Pluginized Agent kernel v1")
 console = Console()
@@ -104,7 +105,13 @@ def chat() -> None:
 
 
 @app.command()
-def serve(host: str = "127.0.0.1", port: int = 8000) -> None:
+def serve(
+    host: str = "127.0.0.1",
+    port: int = 8000,
+    log_level: str = typer.Option("INFO", "--log-level", envvar="PLUGIN_AGENT_LOG_LEVEL", help="Backend log level."),
+    log_file: Optional[str] = typer.Option(None, "--log-file", envvar="PLUGIN_AGENT_LOG_FILE", help="Write backend logs to a file instead of stdout."),
+) -> None:
+    configure_logging(log_level, log_file=log_file)
     server = PluginAgentHTTPServer(state=create_app_state(), host=host, port=port)
     server.start()
     console.print(f"Plugin Agent HTTP service listening on {server.base_url}")
