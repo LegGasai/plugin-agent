@@ -22,13 +22,18 @@ export function PluginConfigPanel({ instance, pluginPackage, diagnostics = [], o
   const attentionLabel = hasAttention && attentionDiagnostics.some(isMissingConfigDiagnostic) ? '需配置' : '需处理';
   const attentionText = hasAttention ? readableDiagnostic(attentionDiagnostics[0]) : '';
 
-  function save() {
+  async function save() {
     if (Object.keys(fieldErrors).length) {
       setError('请先修正配置字段中的 JSON 格式错误。');
       return;
     }
     setError('');
-    onSave(draft);
+    try {
+      await onSave(draft);
+      setOpen(false);
+    } catch (event) {
+      setError(event.message || '保存失败，请检查配置后重试。');
+    }
   }
 
   function updateField(path, value) {

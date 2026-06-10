@@ -458,6 +458,7 @@ export default function App() {
       setError(`保存失败：${event.message}`);
       setToast({ message: `「${label}」保存失败：${event.message}`, variant: 'error' });
       setStatus('保存失败');
+      throw event;
     }
   }
 
