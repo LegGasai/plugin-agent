@@ -147,12 +147,14 @@ export function AgentSidebar({
 }
 
 function findPackageForInstance(packages, instance) {
+  if (instance?.plugin_package) return instance.plugin_package;
   const candidates = packages.filter((item) => item.package_id === instance.package_id);
   if (!candidates.length) return null;
   const pinned = instance.package_version || instance.version;
   if (pinned) {
     const exact = candidates.find((item) => item.version === pinned);
     if (exact) return exact;
+    return null;
   }
   return candidates
     .slice()
@@ -215,6 +217,9 @@ function RuntimeOverview({
   const title = status === 'failed' ? '运行时失败' : status === 'degraded' ? '运行时降级' : '运行时就绪';
   const resourceStats = resourceTypeStats(resources).slice(0, 6);
   const maxResourceCount = Math.max(...resourceStats.map((item) => item.count), 1);
+  const hasErrorDiagnostics = diagnostics.some((diagnostic) => diagnostic.severity !== 'warning');
+  const diagnosticTone = hasErrorDiagnostics ? 'error' : 'warning';
+  const diagnosticTitle = hasErrorDiagnostics ? '检测失败' : diagnosticWarningTitle(diagnostics);
 
   async function saveBindings(event) {
     event.preventDefault();
@@ -271,9 +276,9 @@ function RuntimeOverview({
         <small>资源用于发现，能力用于调用。</small>
       </div>
       {diagnostics.length ? (
-        <div className="diagnostic-panel">
+        <div className={`diagnostic-panel ${diagnosticTone}`}>
           <div className="diagnostic-panel-head">
-            <span><AlertTriangle size={13} />检测失败</span>
+            <span><AlertTriangle size={13} />{diagnosticTitle}</span>
             <span className="diagnostic-head-actions">
               <small>{diagnostics.length} 项</small>
               {bindableCapabilities.length ? (
@@ -286,7 +291,7 @@ function RuntimeOverview({
           </div>
           <div className="diagnostic-list">
             {diagnostics.map((diagnostic, index) => (
-              <div className="diagnostic-item" key={`${diagnostic.code}-${diagnostic.capability || index}`}>
+              <div className={`diagnostic-item ${diagnostic.severity === 'warning' ? 'warning' : 'error'}`} key={`${diagnostic.code}-${diagnostic.capability || index}`}>
                 <div className="diagnostic-title">
                   <strong title={diagnostic.capability || diagnostic.code}>{diagnostic.capability || diagnostic.code}</strong>
                   {diagnostic.capability && diagnostic.code ? <em>{diagnostic.code}</em> : null}
@@ -320,6 +325,13 @@ function RuntimeOverview({
       />
     </div>
   );
+}
+
+function diagnosticWarningTitle(diagnostics = []) {
+  if (diagnostics.length && diagnostics.every((diagnostic) => diagnostic.code === 'missing_dependency')) {
+    return '可选依赖警告';
+  }
+  return '检测警告';
 }
 
 function CapabilityBindingDialog({

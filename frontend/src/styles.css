@@ -1314,10 +1314,18 @@ input:focus, textarea:focus, select:focus {
   display: flex;
   flex-direction: column;
   gap: 7px;
-  border: 1px solid #f0c8c8;
   border-radius: 10px;
-  background: #fffafa;
   padding: 9px;
+}
+
+.diagnostic-panel.error {
+  border: 1px solid #f0c8c8;
+  background: #fffafa;
+}
+
+.diagnostic-panel.warning {
+  border: 1px solid #e8d29a;
+  background: #fffaf0;
 }
 
 .diagnostic-panel-head {
@@ -1326,9 +1334,16 @@ input:focus, textarea:focus, select:focus {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  color: var(--danger-text);
   font-size: 12px;
   font-weight: 760;
+}
+
+.diagnostic-panel.error .diagnostic-panel-head {
+  color: var(--danger-text);
+}
+
+.diagnostic-panel.warning .diagnostic-panel-head {
+  color: #76581f;
 }
 
 .diagnostic-panel-head span {
@@ -1348,11 +1363,19 @@ input:focus, textarea:focus, select:focus {
 .diagnostic-panel-head small {
   flex: none;
   border-radius: 999px;
-  background: #fff0f0;
-  color: #9a3a3a;
   padding: 2px 7px;
   font-size: 11px;
   font-weight: 720;
+}
+
+.diagnostic-panel.error .diagnostic-panel-head small {
+  background: #fff0f0;
+  color: #9a3a3a;
+}
+
+.diagnostic-panel.warning .diagnostic-panel-head small {
+  background: #fff3d7;
+  color: #76581f;
 }
 
 .diagnostic-bind-button {
@@ -1389,13 +1412,20 @@ input:focus, textarea:focus, select:focus {
 
 .diagnostic-item {
   min-width: 0;
-  border: 1px solid #f1d7d7;
   border-radius: 8px;
   background: #ffffff;
   padding: 7px 8px;
   display: flex;
   flex-direction: column;
   gap: 3px;
+}
+
+.diagnostic-item.error {
+  border: 1px solid #f1d7d7;
+}
+
+.diagnostic-item.warning {
+  border: 1px solid #eadbb7;
 }
 
 .diagnostic-title {
@@ -1420,14 +1450,22 @@ input:focus, textarea:focus, select:focus {
   max-width: 46%;
   overflow: hidden;
   border-radius: 999px;
-  background: #fff3f3;
-  color: #9a3a3a;
   padding: 2px 6px;
   font-size: 10px;
   font-style: normal;
   line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.diagnostic-item.error .diagnostic-title em {
+  background: #fff3f3;
+  color: #9a3a3a;
+}
+
+.diagnostic-item.warning .diagnostic-title em {
+  background: #fff5dd;
+  color: #76581f;
 }
 
 .diagnostic-item span {

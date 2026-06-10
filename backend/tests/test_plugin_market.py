@@ -2,6 +2,7 @@ import json
 import platform
 import shutil
 import sys
+import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -377,7 +378,7 @@ def test_market_upload_install_and_runtime_loads_local_plugin(tmp_path):
         base = server.base_url
         package_path = write_weather_plugin_package(tmp_path)
 
-        uploaded = request_json(base, "POST", "/api/marketplace/upload", {"path": str(package_path)})
+        uploaded = request_multipart_upload(base, [(package_path.name, package_path.name, package_path.read_bytes())])
         assert uploaded["plugin_package"]["package_id"] == "tool.weather"
         assert uploaded["plugin_package"]["source"] == "market"
         assert Path(uploaded["market_path"]).exists()
@@ -431,8 +432,8 @@ def test_agent_instances_pin_installed_plugin_versions(tmp_path):
         base = server.base_url
         first_package = write_versioned_tool_package(tmp_path, "0.1.0", "answer-from-0.1.0")
         second_package = write_versioned_tool_package(tmp_path, "0.2.0", "answer-from-0.2.0")
-        request_json(base, "POST", "/api/marketplace/upload", {"path": str(first_package)})
-        request_json(base, "POST", "/api/marketplace/upload", {"path": str(second_package)})
+        request_multipart_upload(base, [(first_package.name, first_package.name, first_package.read_bytes())])
+        request_multipart_upload(base, [(second_package.name, second_package.name, second_package.read_bytes())])
         request_json(base, "POST", "/api/marketplace/install", {"package_id": "tool.versioned", "version": "0.1.0"})
 
         created = request_json(
@@ -449,6 +450,7 @@ def test_agent_instances_pin_installed_plugin_versions(tmp_path):
         )["agent"]
         versioned_instance = next(instance for instance in created["plugin_instances"] if instance["package_id"] == "tool.versioned")
         assert versioned_instance["package_version"] == "0.1.0"
+        assert versioned_instance["plugin_package"]["version"] == "0.1.0"
 
         request_json(base, "POST", "/api/marketplace/install", {"package_id": "tool.versioned", "version": "0.2.0"})
         installed_packages = request_json(base, "GET", "/api/installed-plugin-packages")["plugin_packages"]
@@ -459,6 +461,38 @@ def test_agent_instances_pin_installed_plugin_versions(tmp_path):
         ]
         assert installed_versions == ["0.2.0"]
         assert state.assembly.store.get_package("tool.versioned", "0.1.0")["source"] == "installed"
+
+        request_json(
+            base,
+            "POST",
+            "/api/agents",
+            {
+                "name": "Pinned Agent v2",
+                "plugin_instances": [
+                    {"package_id": "tool.runtime"},
+                    {"package_id": "tool.versioned", "package_version": "0.2.0"},
+                ],
+            },
+        )
+
+        request_json(base, "POST", "/api/marketplace/install", {"package_id": "tool.versioned", "version": "0.1.0"})
+        installed_packages = request_json(base, "GET", "/api/installed-plugin-packages")["plugin_packages"]
+        installed_versions = [
+            package["version"]
+            for package in installed_packages
+            if package["package_id"] == "tool.versioned" and package["source"] == "installed"
+        ]
+        assert installed_versions == ["0.1.0"]
+        assert state.assembly.store.get_package("tool.versioned", "0.2.0")["source"] == "installed"
+        market = request_json(base, "GET", "/api/marketplace/plugins")["market_plugin_packages"]
+        market_by_version = {
+            package["version"]: package
+            for package in market
+            if package["package_id"] == "tool.versioned"
+        }
+        assert market_by_version["0.1.0"]["installed"] is True
+        assert market_by_version["0.2.0"]["installed"] is False
+        assert market_by_version["0.2.0"]["installed_version"] == "0.1.0"
 
         kernel = state.assembly.build_kernel_for_agent(created["id"])
         result = kernel.invoke("tool.invoke", {"tool_id": "versioned.answer", "arguments": {}}).payload
@@ -598,7 +632,7 @@ def test_installed_plugin_package_can_be_uninstalled(tmp_path):
     try:
         base = server.base_url
         package_path = write_weather_plugin_package(tmp_path)
-        request_json(base, "POST", "/api/marketplace/upload", {"path": str(package_path)})
+        request_multipart_upload(base, [(package_path.name, package_path.name, package_path.read_bytes())])
         request_json(base, "POST", "/api/marketplace/install", {"package_id": "tool.weather"})
 
         installed_packages = request_json(base, "GET", "/api/installed-plugin-packages")["plugin_packages"]
@@ -635,6 +669,22 @@ def test_market_upload_accepts_multipart_plugin_package_file(tmp_path):
         server.stop()
 
 
+def test_market_upload_rejects_json_path_by_default(tmp_path):
+    state = create_app_state(runtime_dir=tmp_path / "runtime", market_dir=tmp_path / "plugin-market")
+    server = PluginAgentHTTPServer(state=state, host="127.0.0.1", port=0)
+    server.start()
+    try:
+        package_path = write_weather_plugin_package(tmp_path)
+
+        with pytest.raises(urllib.error.HTTPError) as excinfo:
+            request_json(server.base_url, "POST", "/api/marketplace/upload", {"path": str(package_path)})
+
+        assert excinfo.value.code == 400
+        assert "JSON path uploads are disabled" in excinfo.value.read().decode()
+    finally:
+        server.stop()
+
+
 def test_market_upload_accepts_multipart_plugin_directory(tmp_path):
     state = create_app_state(runtime_dir=tmp_path / "runtime", market_dir=tmp_path / "plugin-market")
     server = PluginAgentHTTPServer(state=state, host="127.0.0.1", port=0)
@@ -667,6 +717,78 @@ def test_upload_rejects_invalid_plugin_package(tmp_path):
 
     assert result["valid"] is False
     assert "plugin.yaml is required" in result["errors"][0]
+
+
+def test_plugin_package_rejects_unsafe_id_version_and_zip_paths(tmp_path):
+    package_dir = tmp_path / "unsafe-package"
+    package_dir.mkdir()
+    (package_dir / "plugin.py").write_text(
+        """
+from plugin_agent_sdk import Plugin
+
+
+class UnsafePlugin(Plugin):
+    pass
+""".strip()
+    )
+    (package_dir / "plugin.yaml").write_text(
+        """
+id: ..
+version: 1.0.0
+name: Unsafe
+description: Unsafe id.
+runtime:
+  type: python.in_process
+  entrypoint: plugin.py:UnsafePlugin
+""".strip()
+    )
+    with pytest.raises(ValueError, match="invalid plugin package id"):
+        install_market_package(package_dir, tmp_path / "installed")
+
+    (package_dir / "plugin.yaml").write_text(
+        """
+id: tool.unsafe
+version: ..
+name: Unsafe
+description: Unsafe version.
+runtime:
+  type: python.in_process
+  entrypoint: plugin.py:UnsafePlugin
+""".strip()
+    )
+    with pytest.raises(ValueError, match="invalid plugin package version"):
+        install_market_package(package_dir, tmp_path / "installed")
+
+    zip_path = tmp_path / "unsafe.pluginpkg"
+    with zipfile.ZipFile(zip_path, "w") as archive:
+        archive.writestr(
+            "plugin.yaml",
+            """
+id: tool.safe
+version: 1.0.0
+name: Safe
+description: Safe manifest with unsafe member.
+runtime:
+  type: python.in_process
+  entrypoint: plugin.py:UnsafePlugin
+""".strip(),
+        )
+        archive.writestr("plugin.py", "from plugin_agent_sdk import Plugin\nclass UnsafePlugin(Plugin):\n    pass\n")
+        archive.writestr("../escaped.txt", "escape")
+
+    with pytest.raises(ValueError, match="unsafe path"):
+        install_market_package(zip_path, tmp_path / "installed")
+    assert not (tmp_path / "escaped.txt").exists()
+
+
+def test_installed_plugin_entrypoint_must_stay_inside_package(tmp_path):
+    installed_path = tmp_path / "installed" / "tool.safe" / "1.0.0"
+    installed_path.mkdir(parents=True)
+    outside = tmp_path / "installed" / "outside.py"
+    outside.write_text("from plugin_agent_sdk import Plugin\nclass OtherPlugin(Plugin):\n    pass\n")
+
+    with pytest.raises(ValueError, match="entrypoint module path"):
+        load_installed_plugin_class(installed_path, "../../outside.py:OtherPlugin")
 
 
 def test_unpackaged_plugin_directory_is_discovered_in_market(tmp_path):
@@ -838,6 +960,11 @@ def test_project_market_plugins_expose_latest_runtime_contracts(tmp_path):
     assert any(dep["capability"] == "context.compressor.compress" for dep in market["context.manager"]["requires"])
     assert any(dep["capability"] == "model.chat" for dep in market["context.compressor.model"]["requires"])
     assert {cap["name"] for cap in market["context.compressor.model"]["provides"]} == {"context.compressor.compress"}
+    mcp_config_schema = next(schema for schema in market["mcp.bridge"]["schemas"] if schema["schema_ref"] == market["mcp.bridge"]["config_schema_ref"])
+    mcp_env_schema = (
+        mcp_config_schema["json_schema"]["properties"]["servers"]["items"]["properties"]["env"]["additionalProperties"]
+    )
+    assert mcp_env_schema["x-secret"] is True
     assert {cap["name"] for cap in market["workspace.sandbox"]["provides"]} == {
         "workspace.ls",
         "workspace.read",
@@ -848,6 +975,18 @@ def test_project_market_plugins_expose_latest_runtime_contracts(tmp_path):
         "workspace.bash",
     }
     assert {cap["name"] for cap in market["agent.loop.codex_bridge"]["provides"]} == {"agent.run", "agent.stream"}
+    codex_config_schema = next(
+        schema
+        for schema in market["agent.loop.codex_bridge"]["schemas"]
+        if schema["schema_ref"] == market["agent.loop.codex_bridge"]["config_schema_ref"]
+    )
+    assert codex_config_schema["json_schema"]["properties"]["env"]["additionalProperties"]["x-secret"] is True
+    claude_config_schema = next(
+        schema
+        for schema in market["agent.loop.claude_code_bridge"]["schemas"]
+        if schema["schema_ref"] == market["agent.loop.claude_code_bridge"]["config_schema_ref"]
+    )
+    assert claude_config_schema["json_schema"]["properties"]["env"]["additionalProperties"]["x-secret"] is True
     assert {cap["name"] for cap in market["agent.loop.claude_code_bridge"]["provides"]} == {"agent.run", "agent.stream"}
     codex_config_schema = next(schema for schema in market["agent.loop.codex_bridge"]["schemas"] if schema["schema_ref"] == "schema://agent.loop.codex_bridge.config.v1")["json_schema"]
     claude_config_schema = next(schema for schema in market["agent.loop.claude_code_bridge"]["schemas"] if schema["schema_ref"] == "schema://agent.loop.claude_code_bridge.config.v1")["json_schema"]

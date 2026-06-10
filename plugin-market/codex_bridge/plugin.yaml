@@ -92,6 +92,7 @@ schemas:
           title: Environment
           additionalProperties:
             type: string
+            x-secret: true
           default: {}
   - schema_ref: schema://agent.run.input.v1
     json_schema:

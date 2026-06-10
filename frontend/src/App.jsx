@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Bot, Boxes, MessageSquare, Store } from 'lucide-react';
 import {
   api,
@@ -86,8 +86,12 @@ export default function App() {
   const [isRunning, setIsRunning] = useState(false);
   const [pendingDeleteAgent, setPendingDeleteAgent] = useState(null);
   const [pendingDeleteSession, setPendingDeleteSession] = useState(null);
+  const activeAgentIdRef = useRef(activeAgentId);
+  const activeSessionIdRef = useRef(activeSessionId);
 
   useEffect(() => { refresh(); }, []);
+  useEffect(() => { activeAgentIdRef.current = activeAgentId; }, [activeAgentId]);
+  useEffect(() => { activeSessionIdRef.current = activeSessionId; }, [activeSessionId]);
   useEffect(() => {
     const syncViewFromUrl = () => {
       const nextView = readViewFromUrl();
@@ -101,6 +105,7 @@ export default function App() {
     return () => window.removeEventListener('popstate', syncViewFromUrl);
   }, []);
   useEffect(() => {
+    setIsRunning(false);
     if (activeAgentId) {
       refreshAgentRuntime(activeAgentId);
       refreshAgentSessions(activeAgentId);
@@ -170,6 +175,7 @@ export default function App() {
     if (!agentId) return;
     try {
       const data = await loadAgentRuntime(agentId);
+      if (activeAgentIdRef.current !== agentId) return;
       setAgentDetails(data.agent);
       setResources(data.resources);
       setCapabilities(data.capabilities);
@@ -178,6 +184,7 @@ export default function App() {
       setDiagnostics(data.diagnostics || []);
       setRuntimeStatus(data.runtimeStatus || 'ready');
     } catch (event) {
+      if (activeAgentIdRef.current !== agentId) return;
       setError(`读取智能体失败：${event.message}`);
     }
   }
@@ -187,48 +194,59 @@ export default function App() {
     setSessionsLoading(true);
     try {
       const data = await loadAgentSessions(agentId);
+      if (activeAgentIdRef.current !== agentId) return;
       const nextSessions = data.sessions || [];
       setSessions(nextSessions);
       const nextSessionId = preferredSessionId && nextSessions.some((session) => session.id === preferredSessionId)
         ? preferredSessionId
         : nextSessions[0]?.id || '';
       setActiveSessionId(nextSessionId);
+      activeSessionIdRef.current = nextSessionId;
       if (nextSessionId) {
-        await loadMessagesForSession(nextSessionId);
+        await loadMessagesForSession(nextSessionId, agentId);
       } else {
         setMessages([WELCOME_MESSAGE]);
       }
     } catch (event) {
+      if (activeAgentIdRef.current !== agentId) return;
       setError(`读取会话失败：${event.message}`);
       setMessages([WELCOME_MESSAGE]);
     } finally {
-      setSessionsLoading(false);
+      if (activeAgentIdRef.current === agentId) {
+        setSessionsLoading(false);
+      }
     }
   }
 
-  async function loadMessagesForSession(sessionId) {
+  async function loadMessagesForSession(sessionId, agentId = activeAgentIdRef.current) {
     if (!sessionId) {
       setMessages([WELCOME_MESSAGE]);
       return;
     }
     const data = await loadSessionMessages(sessionId);
+    if (agentId && activeAgentIdRef.current !== agentId) return;
+    if (activeSessionIdRef.current && activeSessionIdRef.current !== sessionId) return;
     const nextMessages = (data.messages || []).map(normalizeChatMessage);
     setMessages(nextMessages.length ? nextMessages : [WELCOME_MESSAGE]);
   }
 
-  async function createSession() {
-    if (!activeAgentId) return null;
+  async function createSession(agentId = activeAgentId) {
+    const targetAgentId = typeof agentId === 'string' ? agentId : activeAgentIdRef.current;
+    if (!targetAgentId) return null;
     setStatus('正在新建会话');
     setError('');
     try {
-      const data = await createAgentSession(activeAgentId);
+      const data = await createAgentSession(targetAgentId);
+      if (activeAgentIdRef.current !== targetAgentId) return null;
       const session = data.session;
       setSessions((current) => [session, ...current]);
       setActiveSessionId(session.id);
+      activeSessionIdRef.current = session.id;
       setMessages([WELCOME_MESSAGE]);
       setStatus('会话已创建');
       return session;
     } catch (event) {
+      if (activeAgentIdRef.current !== targetAgentId) return null;
       setError(`新建会话失败：${event.message}`);
       setStatus('新建会话失败');
       throw event;
@@ -238,7 +256,8 @@ export default function App() {
   async function selectSession(sessionId) {
     if (!sessionId || sessionId === activeSessionId) return;
     setActiveSessionId(sessionId);
-    await loadMessagesForSession(sessionId);
+    activeSessionIdRef.current = sessionId;
+    await loadMessagesForSession(sessionId, activeAgentId);
   }
 
   async function deleteSession(sessionId) {
@@ -251,8 +270,10 @@ export default function App() {
       setSessions(nextSessions);
       const nextSessionId = activeSessionId === sessionId ? nextSessions[0]?.id || '' : activeSessionId;
       setActiveSessionId(nextSessionId);
+      activeSessionIdRef.current = nextSessionId;
       if (nextSessionId) {
-        await loadMessagesForSession(nextSessionId);
+        activeSessionIdRef.current = nextSessionId;
+        await loadMessagesForSession(nextSessionId, activeAgentId);
       } else {
         setMessages([WELCOME_MESSAGE]);
       }
@@ -361,6 +382,9 @@ export default function App() {
     const packageById = new Map(packages.map((pluginPackage) => [pluginPackage.package_id, pluginPackage]));
     const existingByPackage = new Map();
     for (const instance of sourceAgent.plugin_instances || []) {
+      if (existingByPackage.has(instance.package_id)) {
+        throw new Error(`该智能体包含多个 ${instance.package_id} 插件实例，广场组合编辑暂不支持多实例智能体，请在工作台逐个调整配置。`);
+      }
       if (!existingByPackage.has(instance.package_id)) {
         existingByPackage.set(instance.package_id, instance);
       }
@@ -457,13 +481,17 @@ export default function App() {
 
   async function sendMessage(text) {
     if (!activeAgentId || !text.trim()) return;
-    const session = activeSessionId ? { id: activeSessionId } : await createSession();
+    const runAgentId = activeAgentId;
+    const session = activeSessionId ? { id: activeSessionId } : await createSession(runAgentId);
     if (!session?.id) return;
+    if (activeAgentIdRef.current !== runAgentId) return;
+    const runSessionId = session.id;
     const stamp = Date.now();
     const assistantId = `assistant-${stamp}`;
     const userMessage = { id: `user-${stamp}`, role: 'user', content: text.trim() };
     const assistantMessage = { id: assistantId, role: 'assistant', content: '', meta: { events: [], tool_calls: [] } };
-    setActiveSessionId(session.id);
+    setActiveSessionId(runSessionId);
+    activeSessionIdRef.current = runSessionId;
     setMessages((current) => [
       ...current.filter((message) => message.id !== 'welcome'),
       userMessage,
@@ -473,11 +501,15 @@ export default function App() {
     setStatus('智能体运行中');
     setError('');
     try {
-      await streamAgentRun(activeAgentId, session.id, text.trim(), (event) => {
+      await streamAgentRun(runAgentId, runSessionId, text.trim(), (event) => {
+        if (activeAgentIdRef.current !== runAgentId || activeSessionIdRef.current !== runSessionId) return;
         applyStreamEvent(assistantId, event);
       });
-      await refreshAgentSessions(activeAgentId, session.id);
+      if (activeAgentIdRef.current === runAgentId && activeSessionIdRef.current === runSessionId) {
+        await refreshAgentSessions(runAgentId, runSessionId);
+      }
     } catch (event) {
+      if (activeAgentIdRef.current !== runAgentId || activeSessionIdRef.current !== runSessionId) return;
       setError(`运行失败：${event.message}`);
       setMessages((current) => current.map((message) => (
         message.id === assistantId
@@ -486,7 +518,9 @@ export default function App() {
       )));
       setStatus('运行失败');
     } finally {
-      setIsRunning(false);
+      if (activeAgentIdRef.current === runAgentId && activeSessionIdRef.current === runSessionId) {
+        setIsRunning(false);
+      }
     }
   }
 

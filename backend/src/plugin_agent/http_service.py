@@ -4,6 +4,7 @@ from email import policy
 from email.parser import BytesParser
 import json
 import logging
+import os
 import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -102,6 +103,8 @@ class PluginAgentRequestHandler(BaseHTTPRequestHandler):
                         upload_path = self._write_multipart_upload(Path(temp_dir))
                         self._send_json(self.server.state.assembly.reserve_upload({"path": str(upload_path)}))
                     return
+                if os.environ.get("PLUGIN_AGENT_ALLOW_PATH_UPLOAD") not in {"1", "true", "TRUE", "yes", "YES"}:
+                    raise ValueError("JSON path uploads are disabled; use multipart/form-data")
                 payload = self._read_json()
                 self._send_json(self.server.state.assembly.reserve_upload(payload))
                 return
@@ -150,6 +153,8 @@ class PluginAgentRequestHandler(BaseHTTPRequestHandler):
         except KernelInvokeError as exc:
             logger.warning("POST %s failed with kernel error: %s", path, exc.error.get("code"))
             self._send_json({"error": exc.error["message"], "error_detail": exc.error}, status=500)
+        except ValueError as exc:
+            self._send_error(400, str(exc))
         except Exception as exc:
             logger.exception("POST %s failed", path)
             self._send_error(500, str(exc))

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 import shutil
 import sys
 import zipfile
 from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Any
 
 import yaml
@@ -14,10 +16,30 @@ from plugin_agent_sdk.contracts import PluginPackage, ResourceSpec, RuntimeSpec,
 
 
 PLUGIN_PACKAGE_EXTENSION = ".pluginpkg"
+PACKAGE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+PACKAGE_VERSION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.+-]{0,63}$")
 
 
 def safe_package_dir_name(package_id: str) -> str:
-    return package_id.replace("/", "__").replace("\\", "__")
+    validate_package_id(package_id)
+    return package_id
+
+
+def validate_package_id(package_id: str) -> None:
+    if not isinstance(package_id, str) or not PACKAGE_ID_PATTERN.fullmatch(package_id):
+        raise ValueError(f"invalid plugin package id: {package_id!r}")
+
+
+def validate_package_version(version: str) -> None:
+    if not isinstance(version, str) or not PACKAGE_VERSION_PATTERN.fullmatch(version):
+        raise ValueError(f"invalid plugin package version: {version!r}")
+
+
+def _assert_inside(path: Path, root: Path, message: str) -> None:
+    try:
+        path.resolve().relative_to(root.resolve())
+    except ValueError as exc:
+        raise ValueError(message) from exc
 
 
 def read_plugin_manifest(path: str | Path) -> tuple[dict[str, Any], str]:
@@ -52,10 +74,13 @@ def package_from_path(path: str | Path, source: str, package_path: str | None = 
 def package_from_manifest(manifest: dict[str, Any], manifest_path: str, source: str) -> PluginPackage:
     descriptor = _descriptor_from_manifest(manifest)
     runtime = RuntimeSpec.model_validate(manifest.get("runtime", {}) or {})
+    version = str(descriptor.get("version", "1.0.0"))
+    validate_package_id(descriptor["id"])
+    validate_package_version(version)
     return PluginPackage(
         package_id=descriptor["id"],
         name=descriptor.get("name") or descriptor["id"],
-        version=str(descriptor.get("version", "1.0.0")),
+        version=version,
         entrypoint=runtime.entrypoint,
         runtime=runtime,
         manifest_path=manifest_path,
@@ -91,8 +116,11 @@ def copy_package_to_market(path: str | Path, market_dir: Path) -> tuple[PluginPa
         raise ValueError("; ".join(validation["errors"]))
     package = PluginPackage.model_validate(validation["plugin_package"])
     market_dir.mkdir(parents=True, exist_ok=True)
+    validate_package_id(package.package_id)
+    validate_package_version(package.version)
     filename = f"{safe_package_dir_name(package.package_id)}-{package.version}{PLUGIN_PACKAGE_EXTENSION}"
     destination = market_dir / filename
+    _assert_inside(destination, market_dir, "plugin package destination must stay inside marketplace directory")
     source_path = Path(path).expanduser()
     if source_path.is_dir():
         _zip_directory(source_path, destination)
@@ -116,7 +144,10 @@ def discover_market_packages(market_dir: Path) -> list[PluginPackage]:
 
 def install_market_package(package_path: Path, installed_plugins_dir: Path) -> tuple[PluginPackage, Path]:
     market_package = package_from_path(package_path, source="market", package_path=str(package_path))
+    validate_package_id(market_package.package_id)
+    validate_package_version(market_package.version)
     destination = installed_plugins_dir / safe_package_dir_name(market_package.package_id) / market_package.version
+    _assert_inside(destination, installed_plugins_dir, "plugin install destination must stay inside installed plugins directory")
     if destination.exists():
         shutil.rmtree(destination)
     destination.mkdir(parents=True, exist_ok=True)
@@ -142,7 +173,12 @@ def load_installed_plugin_class(installed_path: str | Path, entrypoint: str) -> 
     module_file, _, class_name = entrypoint.partition(":")
     if not module_file or not class_name:
         raise ValueError("runtime.entrypoint must use '<file.py>:<ClassName>'")
-    plugin_file = Path(installed_path) / module_file
+    module_path = Path(module_file)
+    if module_path.is_absolute() or any(part in {"", ".", ".."} for part in module_path.parts):
+        raise ValueError("runtime.entrypoint module path must stay inside the plugin package")
+    installed_root_path = Path(installed_path).resolve()
+    plugin_file = (installed_root_path / module_path).resolve()
+    _assert_inside(plugin_file, installed_root_path, "runtime.entrypoint module path must stay inside the plugin package")
     if not plugin_file.exists():
         raise ValueError(f"plugin entrypoint file does not exist: {plugin_file}")
     module_name = f"plugin_agent_external_{abs(hash((str(plugin_file), class_name)))}"
@@ -151,7 +187,7 @@ def load_installed_plugin_class(installed_path: str | Path, entrypoint: str) -> 
         raise ValueError(f"cannot load plugin module: {plugin_file}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
-    installed_root = str(Path(installed_path).resolve())
+    installed_root = str(installed_root_path)
     before_modules = set(sys.modules)
     sys.path.insert(0, installed_root)
     try:
@@ -216,7 +252,10 @@ def _zip_directory(source_dir: Path, destination: Path) -> None:
 def _safe_extract(archive: zipfile.ZipFile, destination: Path) -> None:
     destination = destination.resolve()
     for member in archive.infolist():
-        target = (destination / member.filename).resolve()
-        if not str(target).startswith(str(destination)):
+        normalized_name = member.filename.replace("\\", "/")
+        member_path = PurePosixPath(normalized_name)
+        if member_path.is_absolute() or not member_path.parts or any(part in {"", ".", ".."} for part in member_path.parts):
             raise ValueError("plugin package contains an unsafe path")
+        target = (destination / Path(*member_path.parts)).resolve()
+        _assert_inside(target, destination, "plugin package contains an unsafe path")
     archive.extractall(destination)

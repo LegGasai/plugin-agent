@@ -48,6 +48,17 @@ class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
         return None
 
 
+class ValidatingRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def __init__(self, validate):
+        self._validate = validate
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        error = self._validate(str(req.get_method()).upper(), newurl)
+        if error:
+            raise ValueError(error["error"]["message"])
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 class HttpRequestToolPlugin(Plugin):
     def start(self, kernel: Any) -> None:
         super().start(kernel)
@@ -144,7 +155,11 @@ class HttpRequestToolPlugin(Plugin):
 
         timeout = self._timeout(timeout_seconds)
         max_response_bytes = int(self._security().get("max_response_bytes", 65536))
-        opener = urllib.request.build_opener() if self._security().get("allow_redirects") else urllib.request.build_opener(NoRedirectHandler)
+        opener = (
+            urllib.request.build_opener(ValidatingRedirectHandler(self._validate_request_target))
+            if self._security().get("allow_redirects")
+            else urllib.request.build_opener(NoRedirectHandler)
+        )
         request = urllib.request.Request(url, data=data, headers=request_headers, method=method)
 
         try:
@@ -161,6 +176,11 @@ class HttpRequestToolPlugin(Plugin):
             )
 
     def _response_result(self, response: Any, started: float, max_response_bytes: int, endpoint_id: str | None) -> dict[str, Any]:
+        peer_error = self._validate_response_peer(response)
+        if peer_error:
+            peer_error["endpoint_id"] = endpoint_id or peer_error.get("endpoint_id")
+            peer_error["elapsed_ms"] = int((time.monotonic() - started) * 1000)
+            return peer_error
         raw = response.read(max_response_bytes + 1)
         truncated = len(raw) > max_response_bytes
         raw = raw[:max_response_bytes]
@@ -267,6 +287,40 @@ class HttpRequestToolPlugin(Plugin):
             if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified:
                 return True
         return False
+
+    def _validate_response_peer(self, response: Any) -> dict[str, Any] | None:
+        if self._security().get("allow_private_networks"):
+            return None
+        peer_ip = self._response_peer_ip(response)
+        if not peer_ip:
+            return self._error("peer_address_unavailable", "Could not verify the remote peer address")
+        try:
+            ip = ipaddress.ip_address(peer_ip)
+        except ValueError:
+            return self._error("peer_address_unavailable", "Could not verify the remote peer address")
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified:
+            return self._error("private_network_not_allowed", f"Remote peer is a private or local address: {peer_ip}")
+        return None
+
+    def _response_peer_ip(self, response: Any) -> str | None:
+        seen = set()
+        stack = [response, getattr(response, "fp", None)]
+        while stack:
+            target = stack.pop()
+            if target is None or id(target) in seen:
+                continue
+            seen.add(id(target))
+            sock = getattr(target, "_sock", None)
+            if sock is not None:
+                try:
+                    return str(sock.getpeername()[0])
+                except Exception:
+                    return None
+            for attribute in ("raw", "fp"):
+                child = getattr(target, attribute, None)
+                if child is not None:
+                    stack.append(child)
+        return None
 
     def _render_url(self, template: str, params: dict[str, Any]) -> str:
         return TEMPLATE_PATTERN.sub(lambda match: urllib.parse.quote(str(self._param(params, match.group(1))), safe=""), template)
