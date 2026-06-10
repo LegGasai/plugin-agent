@@ -1,7 +1,7 @@
 export const DEFAULT_PACKAGES = [
   'memory.file',
   'skill.registry',
-  'model.openai_compatible',
+  'model.deepseek',
   'tool.runtime',
   'tool.basic',
   'context.compressor.summary',

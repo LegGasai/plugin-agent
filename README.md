@@ -15,6 +15,8 @@ Plugin Agent 是一个由微内核和可插拔插件构成的 Agent 系统。内
 
 你可以像组装应用一样创建 Agent：选择需要的插件实例，配置密钥与运行参数，显式绑定能力 provider，并在控制台中运行带会话历史、工具调用和流式输出的智能体。
 
+<video src="docs/image/demo.mp4" controls width="100%"></video>
+
 ## 核心能力
 
 - 插件市场：通过控制台上传、安装、卸载和版本化管理插件包。

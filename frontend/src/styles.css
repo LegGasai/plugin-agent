@@ -2575,6 +2575,39 @@ input:focus, textarea:focus, select:focus {
 .typing-bubble i:nth-child(3) { animation-delay: .14s; }
 .typing-bubble i:nth-child(4) { animation-delay: .28s; }
 
+.thinking-bubble {
+  color: #40556a;
+}
+
+.typing-inline,
+.message-running-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #5f7085;
+}
+
+.typing-inline span {
+  margin-right: 2px;
+}
+
+.typing-inline i {
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: #a8b8c7;
+  animation: typing-dot 1s infinite ease-in-out;
+}
+
+.typing-inline i:nth-child(3) { animation-delay: .14s; }
+.typing-inline i:nth-child(4) { animation-delay: .28s; }
+
+.message-running-note {
+  margin-top: 8px;
+  font-size: 12px;
+  font-weight: 680;
+}
+
 .composer {
   position: absolute;
   left: 0;

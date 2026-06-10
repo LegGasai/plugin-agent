@@ -27,6 +27,9 @@ export function ChatPanel({
   const isComposingRef = useRef(false);
   const runtimeFailed = runtimeStatus === 'failed';
   const chatTitle = useMemo(() => activeAgent?.name ? `和 ${activeAgent.name} 聊天` : '选择智能体后开始聊天', [activeAgent]);
+  const runningAssistantId = isRunning
+    ? messages.slice().reverse().find((message) => message.role === 'assistant')?.id
+    : '';
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -76,18 +79,13 @@ export function ChatPanel({
         />
         <section className="conversation" aria-label={chatTitle}>
           <div className="message-list" ref={messageListRef}>
-            {messages.map((message) => <ChatMessage key={message.id} message={message} />)}
-            {isRunning && (
-              <div className="message assistant">
-                <div className="avatar"><Loader2 size={15} className="spin" /></div>
-                <div className="bubble typing-bubble">
-                  <span>正在思考并调用插件</span>
-                  <i />
-                  <i />
-                  <i />
-                </div>
-              </div>
-            )}
+            {messages.map((message) => (
+              <ChatMessage
+                key={message.id}
+                message={message}
+                isThinking={message.id === runningAssistantId}
+              />
+            ))}
           </div>
           <form className="composer" onSubmit={submit}>
             <div className="composer-card">
@@ -208,14 +206,22 @@ function diagnosticPlaceholder(diagnostics = []) {
   return first ? `运行时不可用：${first.message}` : '运行时不可用，请检查插件依赖';
 }
 
-function ChatMessage({ message }) {
+function ChatMessage({ message, isThinking = false }) {
   const isUser = message.role === 'user';
+  const hasContent = hasMessageContent(message);
   return (
     <article className={isUser ? 'message user' : 'message assistant'}>
       <div className="avatar">{isUser ? <User size={15} /> : <Bot size={15} />}</div>
-      <div className="bubble">
+      <div className={isThinking && !hasContent ? 'bubble thinking-bubble' : 'bubble'}>
         <div className="message-author">{isUser ? '你' : 'Agent'}</div>
-        <MarkdownBlock content={message.content} />
+        {isThinking && !hasContent ? (
+          <ThinkingIndicator />
+        ) : (
+          <>
+            <MarkdownBlock content={message.content} />
+            {isThinking && <ThinkingNote />}
+          </>
+        )}
         {message.meta?.tool_calls?.length > 0 && (
           <details>
             <summary>工具调用 {message.meta.tool_calls.length} 次</summary>
@@ -224,5 +230,29 @@ function ChatMessage({ message }) {
         )}
       </div>
     </article>
+  );
+}
+
+function hasMessageContent(message) {
+  return Boolean(String(message.content || '').trim() || message.meta?.tool_calls?.length);
+}
+
+function ThinkingIndicator() {
+  return (
+    <span className="typing-inline">
+      <span>正在思考并调用插件</span>
+      <i />
+      <i />
+      <i />
+    </span>
+  );
+}
+
+function ThinkingNote() {
+  return (
+    <span className="message-running-note">
+      <Loader2 size={13} className="spin" />
+      正在处理
+    </span>
   );
 }
