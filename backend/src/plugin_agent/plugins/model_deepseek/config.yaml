@@ -1,4 +1,0 @@
-api_key: null
-base_url: https://api.deepseek.com
-model: deepseek-v4-flash
-timeout_seconds: 60

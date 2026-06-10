@@ -3,8 +3,11 @@ import json
 import urllib.request
 from urllib.parse import quote
 
-from plugin_agent.http_service import PluginAgentHTTPServer, create_app_state
-from plugin_agent.plugins.model_openai_compatible.plugin import OpenAICompatibleModelPlugin
+from plugin_test_utils import market_plugin_class
+
+from plugin_agent.server import PluginAgentHTTPServer, create_app_state
+
+OpenAICompatibleModelPlugin = market_plugin_class("model_openai_compatible")
 
 
 def request_json(base_url, method, path, payload=None):

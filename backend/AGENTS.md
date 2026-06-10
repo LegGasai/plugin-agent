@@ -11,9 +11,9 @@ This subrepo contains the Python backend:
 - SQLite and secret persistence in `src/plugin_agent/stores/`.
 - Internal typed records in `src/plugin_agent/models/`.
 - Pure config, version, and time helpers in `src/plugin_agent/utils/`.
+- FastAPI app and route handlers in `src/plugin_agent/api/`; `src/plugin_agent/server.py` is the uvicorn server wrapper used by the CLI and tests.
 - Public plugin SDK in `src/plugin_agent_sdk/`.
 - Local marketplace plugin packages in `../plugin-market/`.
-- Compatibility implementations and direct provider test fixtures in `src/plugin_agent/plugins/`.
 - External installed plugins in `.plugin-agent/installed-plugins/` at runtime.
 - Sample external upload fixture in `../example-plugin/`.
 - HTTP tool marketplace package in `../plugin-market/http-tool-plugin/`.
@@ -44,7 +44,6 @@ Compatibility shims may remain, but new public contracts belong in `plugin_agent
 Keep these locations distinct:
 
 - `plugin-market/`: local development stand-in for a remote marketplace and internal storage behind the frontend upload/install flow.
-- `src/plugin_agent/plugins/`: compatibility/runtime implementations retained for host tests and legacy helpers, not the product package registry.
 - `.plugin-agent/installed-plugins/`: runtime installation directory for unpacked external plugins, stored by `package_id/version`.
 
 Do not place new plugin source directly under `.plugin-agent/installed-plugins/`; install it through the marketplace upload/install flow so marketplace and installed state stay synchronized.
@@ -126,7 +125,7 @@ For new product plugins, prepare an uploadable package directory with `plugin.ya
 
 Marketplace plugin runtime code must depend on `plugin_agent_sdk` and standard/library dependencies only; do not import from private `plugin_agent.*` modules. If a marketplace plugin needs shared logic, duplicate the small adapter locally for now or move the shared surface into the public SDK.
 
-Add product plugins under `plugin-market/` as uploadable packages, then install them through the normal upload/install flow. Add code under `src/plugin_agent/plugins/` only for compatibility/runtime helpers that must be imported by backend tests or legacy code; do not register those helpers as product packages from `assembly.py`.
+Add product plugins under `plugin-market/` as uploadable packages, then install them through the normal upload/install flow. Do not add plugin implementation packages under `src/plugin_agent/`; tests that need real product plugins should load them from `plugin-market/`.
 
 Model providers must normalize provider-specific responses into the standard `model.chat` output and, when streaming, `model.chat.stream` events. Validate required provider config such as `api_key` during `start()` so `/api/agents/{agent_id}/runtime` reports missing config. ReAct Agent Loop must not parse provider-specific raw responses.
 
@@ -157,6 +156,7 @@ Backend logs should be useful for local diagnosis without leaking data. Log life
 Run from `backend/`:
 
 ```bash
+uv run ruff check src tests
 uv run pytest -q
 ```
 

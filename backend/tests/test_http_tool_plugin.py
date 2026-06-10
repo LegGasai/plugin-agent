@@ -3,8 +3,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from plugin_agent.http_service import create_app_state
-
+from plugin_agent.server import create_app_state
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 

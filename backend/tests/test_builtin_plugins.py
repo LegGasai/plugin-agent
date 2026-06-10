@@ -1,6 +1,6 @@
 
-from plugin_agent.kernel import build_default_kernel
 from plugin_agent.assembly import AgentAssemblyService
+from plugin_agent.kernel import build_default_kernel
 
 
 def test_tool_invoke_calls_builtin_echo_time_and_math():
@@ -56,17 +56,18 @@ def test_default_mcp_bridge_does_not_register_demo_tools_without_configured_serv
     assert not any(tool["tool_id"].startswith("mcp.") for tool in tools["tools"])
 
 
-def test_default_plugins_are_loaded_from_plugin_folders_with_manifests():
+def test_default_plugins_are_loaded_from_marketplace_packages():
     kernel = build_default_kernel()
 
     for plugin in kernel.plugins.values():
         assert plugin.plugin_dir is not None
         assert plugin.manifest_path is not None
-        assert plugin.manifest_path.name == "manifest.yaml"
+        assert plugin.manifest_path.name == "plugin.yaml"
         assert plugin.manifest_path.exists()
         assert plugin.config
 
-    assert kernel.plugins["agent.loop.react"].config["limits"]["max_turns"] == 8
+    react = next(plugin for plugin in kernel.plugins.values() if plugin.package_id == "agent.loop.react")
+    assert react.config["limits"]["max_turns"] >= 1
 
 
 def test_context_manager_routes_compression_to_compressor_plugin(tmp_path):

@@ -5,14 +5,16 @@ import time
 from pathlib import Path
 
 import pytest
+from plugin_test_utils import market_plugin_class
 
 from plugin_agent.kernel import AgentKernel, PluginBase
-from plugin_agent.plugins.agent_loop_react.plugin import ReactAgentLoopPlugin
-from plugin_agent.plugins.mcp_bridge_plugin.plugin import MCPBridgePlugin
-from plugin_agent.plugins.memory_file.plugin import FileMemoryPlugin
-from plugin_agent.plugins.skill_registry.plugin import SkillRegistryPlugin
-from plugin_agent.plugins.tool_basic.plugin import BasicToolPlugin
-from plugin_agent.plugins.tool_runtime_plugin.plugin import ToolRuntimePlugin
+
+ReactAgentLoopPlugin = market_plugin_class("agent_loop_react")
+MCPBridgePlugin = market_plugin_class("mcp_bridge_plugin")
+FileMemoryPlugin = market_plugin_class("memory_file")
+SkillRegistryPlugin = market_plugin_class("skill_registry")
+BasicToolPlugin = market_plugin_class("tool_basic")
+ToolRuntimePlugin = market_plugin_class("tool_runtime_plugin")
 
 
 class ScriptedModelPlugin(PluginBase):
@@ -269,7 +271,10 @@ def build_streaming_kernel(memory_path: Path | None = None, skill_dir: Path | No
         ToolRuntimePlugin(),
         BasicToolPlugin(),
         RecordingContextCompressorPlugin(),
-        ReactAgentLoopPlugin({"limits": {"max_turns": 4, "compress_after_messages": 1}}),
+        ReactAgentLoopPlugin({
+            "limits": {"max_turns": 4},
+            "context": {"context_window_tokens": 1, "trigger_ratio": 0.1, "preserve_recent_messages": 1},
+        }),
     ])
     kernel.start_all()
     return kernel
@@ -594,7 +599,7 @@ def test_openai_compatible_model_builds_request_and_parses_tool_calls(monkeypatc
     import json
     import urllib.request
 
-    from plugin_agent.plugins.model_openai_compatible.plugin import OpenAICompatibleModelPlugin
+    OpenAICompatibleModelPlugin = market_plugin_class("model_openai_compatible")
 
     captured = {}
 
@@ -647,8 +652,8 @@ def test_openrouter_and_deepseek_model_plugins_use_provider_defaults(monkeypatch
     import json
     import urllib.request
 
-    from plugin_agent.plugins.model_deepseek.plugin import DeepSeekModelPlugin
-    from plugin_agent.plugins.model_openrouter.plugin import OpenRouterModelPlugin
+    DeepSeekModelPlugin = market_plugin_class("model_deepseek")
+    OpenRouterModelPlugin = market_plugin_class("model_openrouter")
 
     captured = []
 

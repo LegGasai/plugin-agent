@@ -79,7 +79,7 @@ http://127.0.0.1:5173
 
 ```text
 plugin-agent/
-  backend/          Python Agent 内核、产品服务/存储层、HTTP API、SDK、兼容插件实现和测试
+  backend/          Python Agent 内核、产品服务/存储层、FastAPI HTTP API、SDK 和测试
   frontend/         React 控制台
   docker/           Docker Compose 部署配置
   docs/             用户文档

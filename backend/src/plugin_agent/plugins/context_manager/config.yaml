@@ -1,3 +1,0 @@
-compression:
-  preserve_tail_messages: 1
-  summary_prefix: "Conversation summary so far:"

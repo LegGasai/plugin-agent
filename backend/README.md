@@ -70,17 +70,7 @@ some_plugin/
   plugin.py
 ```
 
-Compatibility implementations and direct provider test fixtures still live under `src/plugin_agent/plugins/`:
-
-```text
-some_plugin/
-  manifest.yaml
-  config.yaml
-  plugin.py
-  __init__.py
-```
-
-External/productized plugin packages must use `plugin.yaml`; product package registration should happen through the marketplace install flow rather than source-tree registration.
+Product plugin packages must use `plugin.yaml`; package registration happens through the marketplace install flow rather than source-tree registration.
 
 Manifest responsibilities:
 
@@ -107,7 +97,7 @@ Initial runtime support is intentionally small:
 - The plugin class must extend `plugin_agent_sdk.Plugin`.
 - Sibling Python modules inside the plugin package can be imported by the entrypoint module.
 
-Marketplace packages must include `runtime.entrypoint`. Built-in compatibility plugins can still use `manifest.yaml`, but product plugins should be uploaded through the marketplace flow so they can evolve without changing the host.
+Marketplace packages must include `runtime.entrypoint`. Product plugins should be uploaded through the marketplace flow so they can evolve without changing the host.
 
 For manual upload/install smoke checks, `../example-plugin/` contains a small `tool.greeter` package that exercises plugin upload, install, resource discovery, and tool invocation without importing private backend code.
 
@@ -200,6 +190,8 @@ Saved Agents store provider choices in Agent-level `capability_bindings`, not pl
 uv run plugin-agent serve --host 127.0.0.1 --port 8000
 ```
 
+The HTTP API is implemented as a FastAPI app under `plugin_agent.api`, and uvicorn serves the app through the `PluginAgentHTTPServer` wrapper. CORS is open for local console development.
+
 Logging is configured by the CLI server entrypoint, not at import time. By default it writes INFO logs to stdout using:
 
 ```text
@@ -257,5 +249,6 @@ Streaming endpoints return `text/event-stream`. Each event has `event: <type>` a
 ## Tests
 
 ```bash
+uv run ruff check src tests
 uv run pytest -q
 ```

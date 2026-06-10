@@ -2,8 +2,8 @@ import json
 import urllib.error
 import urllib.request
 
-from plugin_agent.http_service import PluginAgentHTTPServer, create_app_state
 from plugin_agent.assembly import collect_encrypted_paths, deep_merge, redact_config
+from plugin_agent.server import PluginAgentHTTPServer, create_app_state
 
 
 def request_json(base_url, method, path, payload=None):
