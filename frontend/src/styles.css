@@ -1775,11 +1775,22 @@ input:focus, textarea:focus, select:focus {
   box-shadow: 0 14px 30px rgba(47, 125, 104, .08);
 }
 
+.plugin-card.needs-attention {
+  border-color: var(--danger-line);
+  background: #fffafa;
+}
+
+.plugin-card.needs-attention:hover,
+.plugin-card.needs-attention.open {
+  border-color: #ef9a9a;
+  box-shadow: 0 12px 28px rgba(153, 43, 43, .08);
+}
+
 .plugin-card-head {
   width: 100%;
   min-height: 78px;
   display: grid;
-  grid-template-columns: 18px 20px minmax(0, 1fr);
+  grid-template-columns: 18px 20px minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
   padding: 14px 15px;
@@ -1808,10 +1819,55 @@ input:focus, textarea:focus, select:focus {
   white-space: nowrap;
 }
 
+.plugin-attention-badge {
+  min-width: max-content;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  justify-self: end;
+  border-radius: 999px;
+  border: 1px solid var(--danger-line);
+  background: var(--danger-bg);
+  color: var(--danger-text);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 760;
+  padding: 5px 8px;
+}
+
+.plugin-attention-badge svg {
+  color: var(--danger-text);
+}
+
 .plugin-card-body {
   border-top: 1px solid var(--line);
   padding: 16px;
   background: #fbfdff;
+}
+
+.plugin-card.needs-attention .plugin-card-body {
+  border-top-color: var(--danger-line);
+  background: #fffdfd;
+}
+
+.plugin-attention-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border: 1px solid var(--danger-line);
+  border-radius: 8px;
+  background: var(--danger-bg);
+  color: var(--danger-text);
+  font-size: 12px;
+  font-weight: 680;
+  line-height: 1.45;
+  padding: 9px 10px;
+  margin-bottom: 12px;
+}
+
+.plugin-attention-note svg {
+  flex: none;
+  margin-top: 1px;
 }
 
 .plugin-card-body p {

@@ -92,12 +92,14 @@ plugin-agent/
 
 | 插件 ID | 名称 | 类型 | 主要作用 |
 | --- | --- | --- | --- |
-| `agent.loop.react` | ReAct 智能体循环 | Agent Loop | 基于模型、工具和记忆运行智能体对话。 |
+| `agent.loop.react` | ReAct 智能体循环 | Agent Loop | 基于模型、工具、记忆、Skills 和 MCP 工具上下文运行智能体对话。 |
+| `agent.loop.codex_bridge` | Codex Bridge | Agent Loop | 调用本地 `codex exec` 执行任务并桥接流式输出。 |
+| `agent.loop.claude_code_bridge` | Claude Code Bridge | Agent Loop | 调用本地 `claude --print` 执行任务并桥接流式输出。 |
 | `context.manager` | 上下文管理器 | 上下文 | 编排上下文压缩并生成后续模型消息。 |
 | `context.compressor.summary` | 上下文摘要压缩 | 上下文 | 不依赖模型的轻量摘要压缩。 |
 | `context.compressor.model` | 模型上下文摘要压缩 | 上下文 | 使用模型生成上下文续跑摘要。 |
 | `memory.file` | 文件记忆 | 记忆 | 用本地 JSONL 文件保存和检索记忆。 |
-| `skill.registry` | 技能注册表 | 技能 | 加载、搜索和读取本地 `SKILL.md` 技能。 |
+| `skill.registry` | 技能注册表 | 技能 | 加载本地 `SKILL.md`，提供技能列表、激活和文件读取能力。 |
 | `tool.runtime` | 工具运行时 | 工具运行时 | 发现工具、校验参数并路由工具调用。 |
 | `tool.basic` | 基础工具集 | 工具 | 提供 echo、当前时间、数字相加等基础工具。 |
 | `tool.http_request` | HTTP 请求工具 | 工具 | 调用固定 HTTP 端点或受限 Raw HTTP 请求。 |

@@ -4,6 +4,8 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 from plugin_agent.kernel import AgentKernel, PluginBase
 from plugin_agent.plugins.agent_loop_react.plugin import ReactAgentLoopPlugin
 from plugin_agent.plugins.mcp_bridge_plugin.plugin import MCPBridgePlugin
@@ -285,7 +287,7 @@ def test_react_loop_uses_model_chat_capability_and_tool_observations(tmp_path):
     assert any(event["type"] == "assistant_message" for event in result["events"])
 
 
-def test_react_loop_streams_model_deltas_tools_skills_and_context_compression(tmp_path):
+def test_react_loop_streams_model_deltas_tools_and_context_compression(tmp_path):
     skill_dir = tmp_path / "skills"
     helper = skill_dir / "math-helper"
     helper.mkdir(parents=True)
@@ -295,7 +297,7 @@ def test_react_loop_streams_model_deltas_tools_skills_and_context_compression(tm
     events = list(kernel.stream("agent.stream", {"message": "please add 2+5"}, {"agent_id": "agent-test"}))
 
     assert [event["type"] for event in events][0] == "run_started"
-    assert any(event["type"] == "skills_selected" and event["payload"]["skills"][0]["skill_id"] == "math-helper" for event in events)
+    assert any(event["type"] == "skills_selected" and event["payload"]["skills"] == [] for event in events)
     assert any(event["type"] == "tool_call_started" and event["payload"]["tool_name"] == "math.add" for event in events)
     assert any(event["type"] == "tool_call_completed" and event["payload"]["result"] == 7 for event in events)
     assert [event["payload"]["delta"] for event in events if event["type"] == "model_delta"] == ["The answer ", "is 7"]
@@ -321,25 +323,6 @@ def test_react_loop_forwards_model_delta_before_stream_failure(tmp_path):
     assert "model_delta" in event_types
     assert event_types.index("model_delta") < event_types.index("run_failed")
     assert [event["payload"]["delta"] for event in events if event["type"] == "model_delta"] == ["partial"]
-
-
-def test_skill_registry_search_returns_relevant_skills(tmp_path):
-    skill_dir = tmp_path / "skills"
-    math_skill = skill_dir / "math-helper"
-    debug_skill = skill_dir / "debugger"
-    math_skill.mkdir(parents=True)
-    debug_skill.mkdir()
-    (math_skill / "SKILL.md").write_text("---\nname: math-helper\ndescription: Use math.add for arithmetic.\n---\n# Math Helper\nUse math.add.")
-    (debug_skill / "SKILL.md").write_text("---\nname: debugger\ndescription: Debug carefully.\n---\n# Debugger\nUse evidence.")
-
-    kernel = AgentKernel()
-    kernel.load_plugin(SkillRegistryPlugin({"skill_dirs": [str(skill_dir)]}))
-    kernel.start_all()
-
-    result = kernel.invoke("skill.search", {"query": "arithmetic add numbers", "limit": 1}).payload
-
-    assert result["skills"][0]["skill_id"] == "math-helper"
-    assert result["skills"][0]["score"] > 0
 
 
 def test_file_memory_persists_between_plugin_instances(tmp_path):
@@ -387,11 +370,46 @@ def test_skill_registry_loads_skill_markdown_files(tmp_path):
     kernel.start_all()
 
     listed = kernel.invoke("skill.list", {}).payload["skills"]
-    loaded = kernel.invoke("skill.get", {"skill_id": "debugger"}).payload["skill"]
 
     assert listed[0]["skill_id"] == "debugger"
-    assert loaded["description"] == "Debug carefully."
-    assert "Use evidence" in loaded["content"]
+    assert listed[0]["description"] == "Debug carefully."
+
+
+def test_skill_registry_exposes_activation_and_file_read_tools(tmp_path):
+    skill_dir = tmp_path / "skills" / "debugger"
+    refs_dir = skill_dir / "references"
+    refs_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: debugger\ndescription: Debug carefully.\n---\n# Debugger\nUse evidence.")
+    (refs_dir / "checklist.md").write_text("Collect evidence first.")
+
+    kernel = AgentKernel()
+    kernel.load_plugins([SkillRegistryPlugin({"skill_dirs": [str(tmp_path / "skills")]}), ToolRuntimePlugin()])
+    kernel.start_all()
+
+    tools = kernel.invoke("tool.registry.list", {}).payload["tools"]
+    assert {"activate_skill", "read_skill_file"}.issubset({tool["tool_id"] for tool in tools})
+
+    activated = kernel.invoke("tool.invoke", {"tool_id": "activate_skill", "arguments": {"name": "debugger"}}).payload["result"]
+    assert activated["name"] == "debugger"
+    assert {"path": "SKILL.md", "type": "file", "size": len((skill_dir / "SKILL.md").read_text())} in activated["files"]
+    assert any(entry["path"] == "references/checklist.md" for entry in activated["files"])
+
+    read = kernel.invoke("tool.invoke", {"tool_id": "read_skill_file", "arguments": {"name": "debugger", "path": "references/checklist.md"}}).payload["result"]
+    assert read["content"] == "Collect evidence first."
+
+
+def test_skill_registry_read_skill_file_rejects_path_escape(tmp_path):
+    skill_dir = tmp_path / "skills" / "debugger"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: debugger\ndescription: Debug carefully.\n---\n# Debugger")
+    (tmp_path / "secret.txt").write_text("secret")
+
+    kernel = AgentKernel()
+    kernel.load_plugins([SkillRegistryPlugin({"skill_dirs": [str(tmp_path / "skills")]}), ToolRuntimePlugin()])
+    kernel.start_all()
+
+    with pytest.raises(Exception, match="skill file path must stay inside"):
+        kernel.invoke("tool.invoke", {"tool_id": "read_skill_file", "arguments": {"name": "debugger", "path": "../secret.txt"}})
 
 
 def test_mcp_bridge_discovers_and_calls_stdio_tool(tmp_path):

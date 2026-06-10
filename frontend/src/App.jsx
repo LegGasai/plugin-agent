@@ -85,6 +85,7 @@ export default function App() {
   const [toast, setToast] = useState(null);
   const [isRunning, setIsRunning] = useState(false);
   const [pendingDeleteAgent, setPendingDeleteAgent] = useState(null);
+  const [pendingDeleteSession, setPendingDeleteSession] = useState(null);
 
   useEffect(() => { refresh(); }, []);
   useEffect(() => {
@@ -260,6 +261,19 @@ export default function App() {
       setError(`删除会话失败：${event.message}`);
       setStatus('删除会话失败');
     }
+  }
+
+  function requestDeleteSession(sessionId) {
+    const session = sessions.find((item) => item.id === sessionId);
+    if (!session) return;
+    setPendingDeleteSession(session);
+  }
+
+  async function confirmDeleteSession() {
+    if (!pendingDeleteSession) return;
+    const sessionId = pendingDeleteSession.id;
+    setPendingDeleteSession(null);
+    await deleteSession(sessionId);
   }
 
   async function createAgent({ name, description, packageIds, configs = {} }) {
@@ -601,7 +615,7 @@ export default function App() {
             sessionsLoading={sessionsLoading}
             createSession={createSession}
             selectSession={selectSession}
-            deleteSession={deleteSession}
+            deleteSession={requestDeleteSession}
             messages={messages}
             isRunning={isRunning}
             sendMessage={sendMessage}
@@ -617,6 +631,16 @@ export default function App() {
         tone="danger"
         onConfirm={confirmDeleteAgent}
         onCancel={() => setPendingDeleteAgent(null)}
+      />
+      <ConfirmDialog
+        open={Boolean(pendingDeleteSession)}
+        title="删除历史对话"
+        description={pendingDeleteSession ? `确定删除「${pendingDeleteSession.title || '新会话'}」？删除后无法恢复。` : ''}
+        confirmLabel="删除"
+        cancelLabel="取消"
+        tone="danger"
+        onConfirm={confirmDeleteSession}
+        onCancel={() => setPendingDeleteSession(null)}
       />
     </main>
   );

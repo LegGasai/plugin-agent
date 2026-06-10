@@ -1,0 +1,149 @@
+descriptor:
+  id: agent.loop.codex_bridge
+  version: 1.0.0
+  name: Codex Bridge
+  description: 通过本地 codex exec 命令运行任务，并把 JSONL 输出桥接为 Agent 流式事件。
+  categories: [agent_loop]
+  tags: [Agent Loop, Codex, Coding, Local CLI]
+  config_schema_ref: schema://agent.loop.codex_bridge.config.v1
+  provides:
+    - name: agent.run
+      version: 1.0.0
+      input_schema_ref: schema://agent.run.input.v1
+      output_schema_ref: schema://agent.run.output.v1
+    - name: agent.stream
+      version: 1.0.0
+      input_schema_ref: schema://agent.run.input.v1
+      output_schema_ref: schema://agent.stream.event.v1
+runtime:
+  type: python.in_process
+  entrypoint: plugin.py:CodexBridgeAgentLoopPlugin
+resources:
+  - kind: agent_loop
+    id: codex_bridge
+    title: Codex Bridge
+    description: Runs a local Codex CLI session for the Agent turn.
+    invoke_capability: agent.run
+    schema_refs:
+      input: schema://agent.run.input.v1
+      output: schema://agent.run.output.v1
+      stream_output: schema://agent.stream.event.v1
+schemas:
+  - schema_ref: schema://agent.loop.codex_bridge.config.v1
+    json_schema:
+      type: object
+      required: [workspace_root]
+      additionalProperties: false
+      properties:
+        command:
+          type: string
+          title: Local Codex Path
+          description: Optional local codex executable path. Leave empty to resolve "codex" from PATH.
+          default: ""
+        workspace_root:
+          type: string
+          title: Workspace Root
+        timeout_ms:
+          type: integer
+          title: Timeout Ms
+          minimum: 1000
+          default: 600000
+        max_output_bytes:
+          type: integer
+          title: Max Output Bytes
+          minimum: 1024
+          default: 1000000
+        model:
+          type: string
+          title: Model
+        profile:
+          type: string
+          title: Profile
+        sandbox:
+          type: string
+          title: Sandbox
+          enum: [read-only, workspace-write, danger-full-access]
+          default: workspace-write
+        skip_git_repo_check:
+          type: boolean
+          title: Skip Git Repo Check
+          default: true
+        ephemeral:
+          type: boolean
+          title: Ephemeral
+          default: true
+        ignore_rules:
+          type: boolean
+          title: Ignore Rules
+          default: false
+        bypass_approvals_and_sandbox:
+          type: boolean
+          title: Bypass Approvals And Sandbox
+          default: false
+          description: Pass --dangerously-bypass-approvals-and-sandbox to Codex. Use only when another sandbox boundary exists.
+        extra_args:
+          type: array
+          title: Extra Args
+          items:
+            type: string
+          default: []
+        env:
+          type: object
+          title: Environment
+          additionalProperties:
+            type: string
+          default: {}
+  - schema_ref: schema://agent.run.input.v1
+    json_schema:
+      type: object
+      required: [message]
+      additionalProperties: false
+      properties:
+        message:
+          type: string
+  - schema_ref: schema://agent.run.output.v1
+    json_schema:
+      type: object
+      required: [answer, tool_calls, memory, transcript, events, tool_audit, stop_reason]
+      additionalProperties: false
+      properties:
+        answer:
+          type: string
+        tool_calls:
+          type: array
+          items:
+            type: object
+        memory:
+          type: array
+          items:
+            type: object
+        transcript:
+          type: array
+          items:
+            type: object
+        events:
+          type: array
+          items:
+            type: object
+        tool_audit:
+          type: array
+          items:
+            type: object
+        stop_reason:
+          type: string
+          enum: [final, max_turns, error]
+  - schema_ref: schema://agent.stream.event.v1
+    json_schema:
+      type: object
+      required: [type, sequence, run_id, payload]
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          enum: [run_started, memory_loaded, skills_selected, tools_loaded, model_delta, assistant_message, tool_call_started, tool_call_completed, context_compressed, run_completed, run_failed]
+        sequence:
+          type: integer
+        run_id:
+          type: string
+        payload:
+          type: object

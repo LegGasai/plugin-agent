@@ -116,7 +116,11 @@ Model providers must normalize provider-specific responses into the standard `mo
 
 Agent Loop plugins should enforce their own operation timeouts for tool calls. MCP bridge plugins must apply configured request timeouts to subprocess protocol reads and close subprocesses on startup failure.
 
+Skill-aware Agent Loop plugins should inject only a compact Skill catalog into system context, normally the Skill name and description from `skill.list`. When the model needs more detail, route through tool resources backed by `skill.activate` and `skill.read_file`; do not eagerly inject full `SKILL.md` contents.
+
 Code sandbox and coding capabilities should remain ordinary marketplace plugins. `workspace.sandbox` is the current reference package: it exposes file and command tools through `tool.runtime`, requires an explicit `workspace_root`, keeps file operations inside that root, and wraps macOS command execution with Seatbelt when sandboxing is enabled. Do not move this behavior into the kernel or broaden workspace access without schema changes and tests for path escape, protected paths, command policy, timeouts, and sandbox behavior.
+
+Local CLI Agent Loop bridges such as `agent.loop.codex_bridge` and `agent.loop.claude_code_bridge` should stay product plugins under `plugin-market/`. They may invoke local CLIs, but must require an explicit `workspace_root`, apply timeouts, stream only events matching `agent.stream.event.v1`, and make dangerous permission-bypass flags opt-in config fields.
 
 ## Secrets
 

@@ -1,6 +1,7 @@
 import json
 import platform
 import shutil
+import sys
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -714,13 +715,19 @@ def test_project_market_plugins_expose_latest_runtime_contracts(tmp_path):
         "tool.runtime",
         "context.manager",
         "workspace.sandbox",
+        "agent.loop.codex_bridge",
+        "agent.loop.claude_code_bridge",
         "context.compressor.summary",
         "context.compressor.model",
     ]:
         assert market[package_id]["entrypoint"], package_id
 
     assert {cap["name"] for cap in market["agent.loop.react"]["provides"]} == {"agent.run", "agent.stream"}
-    assert {cap["name"] for cap in market["skill.registry"]["provides"]} == {"skill.list", "skill.get", "skill.search"}
+    assert market["agent.loop.react"]["version"] == "2.0.0"
+    assert market["agent.loop.react"]["config_schema_ref"] == "schema://agent.loop.react.config.v2"
+    react_optional_dependencies = {dep["capability"] for dep in market["agent.loop.react"]["requires"] if not dep.get("required", True)}
+    assert {"skill.list", "skill.activate", "skill.read_file", "mcp.tools.list"}.issubset(react_optional_dependencies)
+    assert {cap["name"] for cap in market["skill.registry"]["provides"]} == {"skill.list", "skill.activate", "skill.read_file"}
     assert "model.chat.stream" in {cap["name"] for cap in market["model.openai_compatible"]["provides"]}
     assert "model.chat.stream" in {cap["name"] for cap in market["model.openrouter"]["provides"]}
     assert "model.chat.stream" in {cap["name"] for cap in market["model.deepseek"]["provides"]}
@@ -737,6 +744,249 @@ def test_project_market_plugins_expose_latest_runtime_contracts(tmp_path):
         "workspace.glob",
         "workspace.bash",
     }
+    assert {cap["name"] for cap in market["agent.loop.codex_bridge"]["provides"]} == {"agent.run", "agent.stream"}
+    assert {cap["name"] for cap in market["agent.loop.claude_code_bridge"]["provides"]} == {"agent.run", "agent.stream"}
+    codex_config_schema = next(schema for schema in market["agent.loop.codex_bridge"]["schemas"] if schema["schema_ref"] == "schema://agent.loop.codex_bridge.config.v1")["json_schema"]
+    claude_config_schema = next(schema for schema in market["agent.loop.claude_code_bridge"]["schemas"] if schema["schema_ref"] == "schema://agent.loop.claude_code_bridge.config.v1")["json_schema"]
+    assert codex_config_schema["properties"]["command"]["default"] == ""
+    assert claude_config_schema["properties"]["command"]["default"] == ""
+    assert "command" not in codex_config_schema.get("required", [])
+    assert "command" not in claude_config_schema.get("required", [])
+
+
+class FakeSkillRegistryPlugin(Plugin):
+    descriptor = {
+        "id": "skill.fake",
+        "version": "1.0.0",
+        "provides": [
+            {"name": "skill.list", "version": "1.0.0", "input_schema_ref": "schema://skill.list.input.v1", "output_schema_ref": "schema://skill.list.output.v1"},
+            {"name": "skill.activate", "version": "1.0.0", "input_schema_ref": "schema://skill.activate.input.v1", "output_schema_ref": "schema://skill.activate.output.v1"},
+            {"name": "skill.read_file", "version": "1.0.0", "input_schema_ref": "schema://skill.read_file.input.v1", "output_schema_ref": "schema://skill.read_file.output.v1"},
+        ],
+    }
+    schemas = [
+        {"schema_ref": "schema://skill.list.input.v1", "json_schema": {"type": "object", "properties": {}, "additionalProperties": False}},
+        {"schema_ref": "schema://skill.list.output.v1", "json_schema": {"type": "object", "required": ["skills"], "properties": {"skills": {"type": "array", "items": {"type": "object"}}}, "additionalProperties": False}},
+        {"schema_ref": "schema://skill.activate.input.v1", "json_schema": {"type": "object", "required": ["name"], "properties": {"name": {"type": "string"}}, "additionalProperties": False}},
+        {"schema_ref": "schema://skill.activate.output.v1", "json_schema": {"type": "object", "required": ["result"], "properties": {"result": {"type": "object"}}, "additionalProperties": False}},
+        {"schema_ref": "schema://skill.read_file.input.v1", "json_schema": {"type": "object", "required": ["name", "path"], "properties": {"name": {"type": "string"}, "path": {"type": "string"}}, "additionalProperties": False}},
+        {"schema_ref": "schema://skill.read_file.output.v1", "json_schema": {"type": "object", "required": ["result"], "properties": {"result": {"type": "object"}}, "additionalProperties": False}},
+    ]
+    resources = [
+        {
+            "kind": "tool",
+            "id": "activate_skill",
+            "title": "Activate Skill",
+            "description": "Activate a local skill and inspect its metadata and file tree.",
+            "invoke_capability": "skill.activate",
+            "schema_refs": {"input": "schema://skill.activate.input.v1", "output": "schema://skill.activate.output.v1"},
+        },
+        {
+            "kind": "tool",
+            "id": "read_skill_file",
+            "title": "Read Skill File",
+            "description": "Read a regular file inside an enabled skill directory.",
+            "invoke_capability": "skill.read_file",
+            "schema_refs": {"input": "schema://skill.read_file.input.v1", "output": "schema://skill.read_file.output.v1"},
+        },
+    ]
+
+    def invoke(self, capability, payload, context):
+        if capability == "skill.list":
+            return {"skills": [{"skill_id": "tool-use", "description": "Prefer platform tools."}]}
+        if capability == "skill.activate":
+            return {"result": {"name": payload["name"], "files": [{"path": "SKILL.md", "type": "file", "size": 10}]}}
+        if capability == "skill.read_file":
+            return {"result": {"skill": payload["name"], "path": payload["path"], "content": "# Tool Use"}}
+        return super().invoke(capability, payload, context)
+
+
+class FakeMCPPlugin(Plugin):
+    descriptor = {
+        "id": "mcp.fake",
+        "version": "1.0.0",
+        "provides": [
+            {"name": "mcp.tools.list", "version": "1.0.0", "input_schema_ref": "schema://mcp.tools.list.input.v1", "output_schema_ref": "schema://mcp.tools.list.output.v1"},
+            {"name": "mcp.tool.call", "version": "1.0.0", "input_schema_ref": "schema://mcp.tool.call.input.v1", "output_schema_ref": "schema://mcp.tool.call.output.v1"},
+        ],
+    }
+    schemas = [
+        {"schema_ref": "schema://mcp.tools.list.input.v1", "json_schema": {"type": "object", "properties": {}, "additionalProperties": False}},
+        {"schema_ref": "schema://mcp.tools.list.output.v1", "json_schema": {"type": "object", "required": ["tools"], "properties": {"tools": {"type": "array", "items": {"type": "object"}}}, "additionalProperties": False}},
+        {"schema_ref": "schema://mcp.tool.call.input.v1", "json_schema": {"type": "object", "required": ["tool_name"], "properties": {"tool_name": {"type": "string"}, "arguments": {"type": "object"}}, "additionalProperties": False}},
+        {"schema_ref": "schema://mcp.tool.call.output.v1", "json_schema": {"type": "object", "required": ["result"], "properties": {"result": {"type": "object"}}, "additionalProperties": False}},
+        {"schema_ref": "schema://mcp.local.echo.input.v1", "json_schema": {"type": "object", "required": ["text"], "properties": {"text": {"type": "string"}}, "additionalProperties": False}},
+        {"schema_ref": "schema://mcp.local.echo.output.v1", "json_schema": {"type": "object"}},
+    ]
+    resources = [
+        {
+            "kind": "tool",
+            "id": "mcp.local.echo",
+            "title": "MCP Echo",
+            "description": "Echo via fake MCP.",
+            "invoke_capability": "mcp.tool.call",
+            "schema_refs": {"input": "schema://mcp.local.echo.input.v1", "output": "schema://mcp.local.echo.output.v1"},
+        }
+    ]
+
+    def invoke(self, capability, payload, context):
+        if capability == "mcp.tools.list":
+            return {"tools": [{"tool_id": "mcp.local.echo", "title": "MCP Echo", "description": "Echo via fake MCP."}]}
+        if capability == "mcp.tool.call":
+            return {"result": {"echo": payload.get("arguments", {}).get("text", "")}}
+        return super().invoke(capability, payload, context)
+
+
+class FailingSkillListPlugin(FakeSkillRegistryPlugin):
+    def invoke(self, capability, payload, context):
+        if capability == "skill.list":
+            raise RuntimeError("skill index unavailable")
+        return super().invoke(capability, payload, context)
+
+
+def test_react_v2_injects_skills_and_mcp_tool_context(tmp_path):
+    from plugin_agent.plugins.memory_file.plugin import FileMemoryPlugin
+    from plugin_agent.plugins.tool_runtime_plugin.plugin import ToolRuntimePlugin
+
+    state = create_app_state(runtime_dir=tmp_path / "runtime")
+    installed = state.assembly.install_market_plugin({"package_id": "agent.loop.react", "version": "2.0.0"})
+    plugin_class = load_installed_plugin_class(installed["installed_path"], installed["plugin_package"]["entrypoint"])
+    model = CapturingModelPlugin()
+    kernel = AgentKernel()
+    kernel.load_plugins([
+        FileMemoryPlugin({"path": str(tmp_path / "memory.jsonl")}),
+        FakeSkillRegistryPlugin(),
+        FakeMCPPlugin(),
+        model,
+        ToolRuntimePlugin(),
+        plugin_class({"limits": {"max_turns": 1, "compress_after_messages": 99}}),
+    ])
+    kernel.start_all()
+
+    events = list(kernel.stream("agent.stream", {"message": "please use the right tool"}, {"agent_id": "agent-test"}))
+
+    assert any(event["type"] == "skills_selected" and event["payload"]["skills"][0]["skill_id"] == "tool-use" for event in events)
+    assert any(event["type"] == "mcp_tools_loaded" and event["payload"]["tools"][0]["tool_id"] == "mcp.local.echo" for event in events)
+    assert model.requests
+    prompt_text = "\n".join(message["content"] for message in model.requests[0]["messages"] if message["role"] == "system")
+    assert "<available_skills>" in prompt_text
+    assert "tool-use: Prefer platform tools." in prompt_text
+    assert "Use the platform tools when they help" not in prompt_text
+    tool_names = {tool["function"]["name"] for tool in model.requests[0]["tools"]}
+    assert {"activate_skill", "read_skill_file"}.issubset(tool_names)
+    assert "mcp.local.echo" in prompt_text
+    assert events[-1]["type"] == "run_completed"
+
+
+def test_react_v2_warns_and_continues_when_optional_skill_list_fails(tmp_path):
+    from plugin_agent.plugins.memory_file.plugin import FileMemoryPlugin
+    from plugin_agent.plugins.tool_runtime_plugin.plugin import ToolRuntimePlugin
+
+    state = create_app_state(runtime_dir=tmp_path / "runtime")
+    installed = state.assembly.install_market_plugin({"package_id": "agent.loop.react", "version": "2.0.0"})
+    plugin_class = load_installed_plugin_class(installed["installed_path"], installed["plugin_package"]["entrypoint"])
+    model = CapturingModelPlugin()
+    kernel = AgentKernel()
+    kernel.load_plugins([
+        FileMemoryPlugin({"path": str(tmp_path / "memory.jsonl")}),
+        FailingSkillListPlugin(),
+        model,
+        ToolRuntimePlugin(),
+        plugin_class({"limits": {"max_turns": 1, "compress_after_messages": 99}}),
+    ])
+    kernel.start_all()
+
+    events = list(kernel.stream("agent.stream", {"message": "continue despite skill failure"}, {"agent_id": "agent-test"}))
+
+    assert any(event["type"] == "runtime_warning" and event["payload"]["code"] == "skill.list_failed" for event in events)
+    assert any(event["type"] == "skills_selected" and event["payload"]["skills"] == [] for event in events)
+    assert events[-1]["type"] == "run_completed"
+    assert model.requests
+
+
+def test_codex_bridge_streams_fake_cli_jsonl(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    fake_codex = tmp_path / "codex"
+    fake_codex.write_text(
+        f"""#!{sys.executable}
+import json
+import sys
+
+prompt = sys.stdin.read().strip()
+print(json.dumps({{"type": "thread.started", "thread_id": "thread-fake"}}), flush=True)
+print(json.dumps({{"type": "item.started", "item": {{"id": "cmd-1", "type": "command_execution", "command": "echo hi", "status": "in_progress"}}}}), flush=True)
+print(json.dumps({{"type": "item.completed", "item": {{"id": "cmd-1", "type": "command_execution", "command": "echo hi", "aggregated_output": "hi\\\\n", "exit_code": 0, "status": "completed"}}}}), flush=True)
+print(json.dumps({{"type": "item.completed", "item": {{"id": "msg-1", "type": "agent_message", "text": "Codex says: " + prompt}}}}), flush=True)
+print(json.dumps({{"type": "turn.completed", "usage": {{"input_tokens": 1}}}}), flush=True)
+"""
+    )
+    fake_codex.chmod(0o755)
+    state = create_app_state(runtime_dir=tmp_path / "runtime")
+    state.assembly.install_market_plugin({"package_id": "agent.loop.codex_bridge"})
+    kernel = state.assembly.build_kernel(
+        ["agent.loop.codex_bridge"],
+        {
+            "agent.loop.codex_bridge": {
+                "command": str(fake_codex),
+                "workspace_root": str(workspace),
+                "timeout_ms": 5000,
+                "sandbox": "read-only",
+            }
+        },
+    )
+
+    events = list(kernel.stream("agent.stream", {"message": "hello bridge"}, {"run_id": "run-test"}))
+
+    assert [event["type"] for event in events if event["type"] == "model_delta"] == ["model_delta"]
+    assert any(event["type"] == "tool_call_started" for event in events)
+    assert any(event["type"] == "tool_call_completed" for event in events)
+    completed = events[-1]
+    assert completed["type"] == "run_completed"
+    assert completed["payload"]["answer"] == "Codex says: hello bridge"
+    assert completed["payload"]["stop_reason"] == "final"
+
+
+def test_claude_code_bridge_streams_fake_cli_and_can_skip_permissions(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    args_file = tmp_path / "claude-args.txt"
+    fake_claude = tmp_path / "claude"
+    fake_claude.write_text(
+        f"""#!{sys.executable}
+import json
+import os
+import sys
+from pathlib import Path
+
+Path(os.environ["ARGS_FILE"]).write_text("\\n".join(sys.argv[1:]))
+print(json.dumps({{"type": "system", "subtype": "init", "session_id": "claude-fake"}}), flush=True)
+print(json.dumps({{"type": "stream_event", "event": {{"type": "content_block_delta", "delta": {{"type": "text_delta", "text": "Claude "}}}}}}), flush=True)
+print(json.dumps({{"type": "stream_event", "event": {{"type": "content_block_delta", "delta": {{"type": "text_delta", "text": "bridge"}}}}}}), flush=True)
+print(json.dumps({{"type": "result", "subtype": "success", "is_error": False, "result": "Claude bridge", "stop_reason": "end_turn"}}), flush=True)
+"""
+    )
+    fake_claude.chmod(0o755)
+    state = create_app_state(runtime_dir=tmp_path / "runtime")
+    state.assembly.install_market_plugin({"package_id": "agent.loop.claude_code_bridge"})
+    kernel = state.assembly.build_kernel(
+        ["agent.loop.claude_code_bridge"],
+        {
+            "agent.loop.claude_code_bridge": {
+                "command": str(fake_claude),
+                "workspace_root": str(workspace),
+                "timeout_ms": 5000,
+                "dangerously_skip_permissions": True,
+                "env": {"ARGS_FILE": str(args_file)},
+            }
+        },
+    )
+
+    result = kernel.invoke("agent.run", {"message": "hello claude"}, {"run_id": "run-claude"}).payload
+
+    assert result["answer"] == "Claude bridge"
+    assert result["stop_reason"] == "final"
+    assert "--dangerously-skip-permissions" in args_file.read_text()
 
 
 def test_workspace_sandbox_tools_are_invoked_through_tool_runtime(tmp_path):

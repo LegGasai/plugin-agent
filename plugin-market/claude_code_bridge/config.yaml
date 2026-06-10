@@ -1,0 +1,14 @@
+command: ""
+workspace_root: ""
+timeout_ms: 600000
+max_output_bytes: 1000000
+model: ""
+permission_mode: default
+include_partial_messages: true
+no_session_persistence: true
+bare: false
+dangerously_skip_permissions: false
+allowed_tools: []
+disallowed_tools: []
+extra_args: []
+env: {}

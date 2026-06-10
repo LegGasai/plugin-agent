@@ -115,15 +115,19 @@ export function AgentSidebar({
           <small>{agentDetails?.plugin_instances?.length || 0} 个插件</small>
         </div>
         <div className="plugin-config-list">
-          {(agentDetails?.plugin_instances || []).map((instance) => (
-            <PluginConfigPanel
-              key={instance.instance_id}
-              instance={instance}
-              pluginPackage={findPackageForInstance(packages, instance)}
-              onSave={(config) => savePluginConfig(instance.instance_id, stripRedactedSecrets(config))}
-              onRestart={() => restartPluginInstance(instance.instance_id)}
-            />
-          ))}
+          {(agentDetails?.plugin_instances || []).map((instance) => {
+            const instanceDiagnostics = diagnosticsForInstance(diagnostics, instance);
+            return (
+              <PluginConfigPanel
+                key={instance.instance_id}
+                instance={instance}
+                pluginPackage={findPackageForInstance(packages, instance)}
+                diagnostics={instanceDiagnostics}
+                onSave={(config) => savePluginConfig(instance.instance_id, stripRedactedSecrets(config))}
+                onRestart={() => restartPluginInstance(instance.instance_id)}
+              />
+            );
+          })}
           {!agentDetails?.plugin_instances?.length && <p className="empty">选择或创建智能体后，可在这里编辑每个插件的配置。</p>}
         </div>
       </div>
@@ -142,6 +146,25 @@ function findPackageForInstance(packages, instance) {
   return candidates
     .slice()
     .sort((left, right) => String(right.version || '').localeCompare(String(left.version || ''), undefined, { numeric: true }))[0];
+}
+
+function diagnosticsForInstance(diagnostics = [], instance) {
+  if (!instance) return [];
+  const instanceTokens = [
+    instance.instance_id,
+    instance.package_id,
+    instance.display_name,
+  ].filter(Boolean).map((value) => String(value).toLowerCase());
+
+  return diagnostics.filter((diagnostic) => {
+    const pluginInstanceId = diagnostic.plugin_instance_id || diagnostic.pluginInstanceId;
+    const pluginId = diagnostic.plugin_id || diagnostic.pluginId;
+    if (pluginInstanceId && pluginInstanceId === instance.instance_id) return true;
+    if (pluginId && pluginId === instance.package_id) return true;
+
+    const message = String(diagnostic.message || '').toLowerCase();
+    return instanceTokens.some((token) => message.includes(token));
+  });
 }
 
 function RuntimeOverview({
