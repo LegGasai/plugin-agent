@@ -1,1 +1,2 @@
-path: .plugin-agent/memory.jsonl
+memory_dir: null
+max_file_bytes: 524288

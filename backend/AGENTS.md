@@ -9,7 +9,7 @@ This subrepo contains the Python backend:
 - Private kernel and runtime in `src/plugin_agent/`.
 - Public plugin SDK in `src/plugin_agent_sdk/`.
 - Local marketplace plugin packages in `../plugin-market/`.
-- Built-in compatibility implementations in `src/plugin_agent/plugins/`.
+- Compatibility implementations and direct provider test fixtures in `src/plugin_agent/plugins/`.
 - External installed plugins in `.plugin-agent/installed-plugins/` at runtime.
 - Sample external upload fixture in `../example-plugin/`.
 - HTTP tool marketplace package in `../plugin-market/http-tool-plugin/`.
@@ -40,21 +40,22 @@ Compatibility shims may remain, but new public contracts belong in `plugin_agent
 Keep these locations distinct:
 
 - `plugin-market/`: local development stand-in for a remote marketplace and internal storage behind the frontend upload/install flow.
-- `src/plugin_agent/plugins/`: compatibility/built-in runtime implementations used while the platform is transitioning fully to installed plugin loading.
+- `src/plugin_agent/plugins/`: compatibility/runtime implementations retained for host tests and legacy helpers, not the product package registry.
 - `.plugin-agent/installed-plugins/`: runtime installation directory for unpacked external plugins, stored by `package_id/version`.
 
 Do not place new plugin source directly under `.plugin-agent/installed-plugins/`; install it through the marketplace upload/install flow so marketplace and installed state stay synchronized.
+On backend startup, `AgentAssemblyService` ensures the default package set in `DEFAULT_PLUGIN_INSTALLS` is installed from `plugin-market/` when those marketplace packages are present. Missing default packages are diagnostics, not a reason to register source-tree built-ins.
 
 Keep the HTTP views distinct as well:
 
 - `GET /api/marketplace/plugins` returns packages from the marketplace source.
-- `GET /api/installed-plugin-packages` returns built-in and installed packages available for Agent assembly.
-- `DELETE /api/installed-plugin-packages/{package_id}` uninstalls external installed packages only; built-in packages are not deleted.
+- `GET /api/installed-plugin-packages` returns installed packages available for Agent assembly.
+- `DELETE /api/installed-plugin-packages/{package_id}` uninstalls installed packages when they are not used by saved plugin instances.
 - `GET /api/plugin-packages` is a compatibility alias for the installed-package view.
 
 External plugin packages use `.pluginpkg` zip files with a required `plugin.yaml`. Initial runtime support is `python.in_process` with an entrypoint like `plugin.py:WeatherPlugin`. External plugin classes must import and extend `plugin_agent_sdk.Plugin`. Entry modules may import sibling Python modules from the same plugin package.
 
-Default package selection chooses the newest available version for a `package_id`; installed external packages take precedence over built-in compatibility implementations only when they share the same `package_id` and version. The installed-package view exposes one active version per `package_id`. Older installed versions may remain only when saved Agent plugin instances still pin that `package_version`; do not surface those retained versions as separately installed plugins. This is intentional: `plugin-market/` is the product source of truth for plugin evolution, and `src/plugin_agent/plugins/` is the host fallback while the platform transitions.
+Default package selection chooses the newest installed version for a `package_id`. The installed-package view exposes one active version per `package_id`. Older installed versions may remain only when saved Agent plugin instances still pin that `package_version`; do not surface those retained versions as separately installed plugins. `plugin-market/` is the product source of truth for plugin evolution, and runtime copies live under `.plugin-agent/installed-plugins/`.
 
 Use `../example-plugin/` for local upload/install smoke checks when a full plugin package fixture is not needed. Use `../plugin-market/http-tool-plugin/` when testing configured tool integrations, dynamic secret header config, or endpoint/raw HTTP request behavior.
 
@@ -63,7 +64,7 @@ Use `../example-plugin/` for local upload/install smoke checks when a full plugi
 Plugins communicate through capability routing:
 
 ```python
-self.kernel.invoke("memory.query", {"query": text, "limit": 5}, context)
+self.kernel.invoke("memory.read", {"path": "MEMORY.md"}, context)
 self.kernel.stream("agent.stream", {"message": text}, context)
 ```
 
@@ -102,7 +103,7 @@ Preserve these distinctions:
 Do not collapse plugin instances back into global plugin IDs.
 Do not add plugin enable/disable semantics for this phase. A plugin participates in an Agent only when that Agent has a plugin instance for it.
 
-Sessions are product/runtime state, not plugin-owned state. The host stores session messages and passes them to Agent Loop plugins through `context["history_messages"]`; memory plugins still own long-term or semantic memory through memory capabilities. When automatically writing chat turns into memory, include `agent_id` and `session_id` from context and query by the same scope unless a plugin explicitly implements cross-session memory policy.
+Sessions are product/runtime state, not plugin-owned state. The host stores session messages and passes them to Agent Loop plugins through `context["history_messages"]`; memory plugins still own longer-lived memory through memory capabilities. Markdown memory providers should expose `memory.read` and `memory.write` tools, keep `MEMORY.md` as an index, and let Agent Loop plugins inject only the index unless the model explicitly reads a memory file.
 
 ## Adding Plugins
 
@@ -110,7 +111,7 @@ For new product plugins, prepare an uploadable package directory with `plugin.ya
 
 Marketplace plugin runtime code must depend on `plugin_agent_sdk` and standard/library dependencies only; do not import from private `plugin_agent.*` modules. If a marketplace plugin needs shared logic, duplicate the small adapter locally for now or move the shared surface into the public SDK.
 
-Add a built-in plugin under `src/plugin_agent/plugins/` only when it is a compatibility/runtime implementation that must ship as part of the backend host. Built-ins must still use `plugin_agent_sdk.Plugin`, register a factory in `src/plugin_agent/assembly.py`, and include tests for provider behavior and package discovery.
+Add product plugins under `plugin-market/` as uploadable packages, then install them through the normal upload/install flow. Add code under `src/plugin_agent/plugins/` only for compatibility/runtime helpers that must be imported by backend tests or legacy code; do not register those helpers as product packages from `assembly.py`.
 
 Model providers must normalize provider-specific responses into the standard `model.chat` output and, when streaming, `model.chat.stream` events. Validate required provider config such as `api_key` during `start()` so `/api/agents/{agent_id}/runtime` reports missing config. ReAct Agent Loop must not parse provider-specific raw responses.
 

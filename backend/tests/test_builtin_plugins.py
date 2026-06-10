@@ -15,14 +15,23 @@ def test_tool_invoke_calls_builtin_echo_time_and_math():
     assert added["result"] == 3
 
 
-def test_memory_write_and_query_round_trip():
+def test_memory_read_and_write_round_trip():
     kernel = build_default_kernel()
 
-    kernel.invoke("memory.write", {"text": "user is building a plugin agent", "metadata": {"kind": "note"}})
-    result = kernel.invoke("memory.query", {"query": "plugin agent", "limit": 3}).payload
+    written = kernel.invoke(
+        "memory.write",
+        {
+            "path": "user.md",
+            "description": "User profile memory",
+            "content": "User is building a plugin agent.",
+        },
+    ).payload["result"]
+    index = kernel.invoke("memory.read", {"path": "MEMORY.md"}).payload["result"]
+    user_memory = kernel.invoke("memory.read", {"path": "user.md"}).payload["result"]
 
-    assert result["items"]
-    assert result["items"][0]["text"] == "user is building a plugin agent"
+    assert written["path"] == "user.md"
+    assert index["entries"] == [{"path": "user.md", "description": "User profile memory"}]
+    assert user_memory["content"] == "User is building a plugin agent."
 
 
 def test_default_agent_reports_model_configuration_error_without_api_key():

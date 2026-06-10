@@ -9,7 +9,7 @@ import shutil
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 from uuid import uuid4
 
 from jsonschema import ValidationError, validate
@@ -24,19 +24,7 @@ from plugin_agent.plugin_store import (
     load_installed_plugin_class,
     validate_plugin_package,
 )
-from plugin_agent.plugins.agent_loop_react.plugin import ReactAgentLoopPlugin
-from plugin_agent.plugins.context_compressor_summary.plugin import SummaryContextCompressorPlugin
-from plugin_agent.plugins.context_manager.plugin import ContextManagerPlugin
-from plugin_agent.plugins.mcp_bridge_plugin.plugin import MCPBridgePlugin
-from plugin_agent.plugins.memory_file.plugin import FileMemoryPlugin
-from plugin_agent.plugins.model_deepseek.plugin import DeepSeekModelPlugin
-from plugin_agent.plugins.model_openai_compatible.plugin import OpenAICompatibleModelPlugin
-from plugin_agent.plugins.model_openrouter.plugin import OpenRouterModelPlugin
-from plugin_agent.plugins.skill_registry.plugin import SkillRegistryPlugin
-from plugin_agent.plugins.tool_basic.plugin import BasicToolPlugin
-from plugin_agent.plugins.tool_runtime_plugin.plugin import ToolRuntimePlugin
 
-PluginFactory = Callable[..., PluginBase]
 logger = logging.getLogger(__name__)
 
 DEFAULT_AGENT_PLUGIN_IDS = [
@@ -51,19 +39,19 @@ DEFAULT_AGENT_PLUGIN_IDS = [
     "agent.loop.react",
 ]
 
-PLUGIN_FACTORIES: dict[str, PluginFactory] = {
-    "memory.file": FileMemoryPlugin,
-    "skill.registry": SkillRegistryPlugin,
-    "context.compressor.summary": SummaryContextCompressorPlugin,
-    "context.manager": ContextManagerPlugin,
-    "model.openai_compatible": OpenAICompatibleModelPlugin,
-    "model.openrouter": OpenRouterModelPlugin,
-    "model.deepseek": DeepSeekModelPlugin,
-    "tool.runtime": ToolRuntimePlugin,
-    "tool.basic": BasicToolPlugin,
-    "mcp.bridge": MCPBridgePlugin,
-    "agent.loop.react": ReactAgentLoopPlugin,
-}
+DEFAULT_PLUGIN_INSTALLS = [
+    "memory.file",
+    "skill.registry",
+    "model.openai_compatible",
+    "model.openrouter",
+    "model.deepseek",
+    "tool.runtime",
+    "tool.basic",
+    "context.compressor.summary",
+    "context.manager",
+    "mcp.bridge",
+    "agent.loop.react",
+]
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -709,15 +697,48 @@ class AgentAssemblyService:
         logger.info("Agent assembly initialized runtime_dir=%s market_dir=%s", self.runtime_dir, self.market_dir)
 
     def refresh_plugin_packages(self) -> dict[str, Any]:
-        for package_id in sorted(PLUGIN_FACTORIES):
-            plugin = PLUGIN_FACTORIES[package_id](self.plugin_config_overrides.get(package_id) or None)
-            self.store.upsert_package(plugin.package_model())
+        self._ensure_default_plugin_installs()
         for package in discover_installed_packages(self.installed_plugins_dir):
             self.store.upsert_package(package)
         for package in self.store.list_packages():
-            if package.get("source") == "builtin" and package["package_id"] not in PLUGIN_FACTORIES:
+            if package.get("source") == "builtin":
                 self.store.delete_package(package["package_id"], package.get("version", "1.0.0"))
         return {"plugin_packages": self.list_plugin_packages()}
+
+    def _ensure_default_plugin_installs(self) -> None:
+        installed_ids = {
+            package.package_id
+            for package in discover_installed_packages(self.installed_plugins_dir)
+        }
+        market_packages_by_id: dict[str, list[PluginPackage]] = {}
+        for package in discover_market_packages(self.market_dir):
+            market_packages_by_id.setdefault(package.package_id, []).append(package)
+
+        for package_id in DEFAULT_PLUGIN_INSTALLS:
+            if package_id in installed_ids:
+                continue
+            candidates = market_packages_by_id.get(package_id, [])
+            if not candidates:
+                logger.warning(
+                    "Default plugin package missing from marketplace package_id=%s version=latest",
+                    package_id,
+                )
+                continue
+            selected = max(candidates, key=lambda package: version_sort_key(package.version))
+            if not selected.market_path:
+                logger.warning(
+                    "Default plugin package has no marketplace path package_id=%s version=%s",
+                    package_id,
+                    selected.version,
+                )
+                continue
+            installed_package, _ = install_market_package(Path(selected.market_path), self.installed_plugins_dir)
+            installed_ids.add(installed_package.package_id)
+            logger.info(
+                "Default plugin package installed package_id=%s version=%s",
+                installed_package.package_id,
+                installed_package.version,
+            )
 
     def list_plugin_packages(self, tag: str | None = None) -> list[dict[str, Any]]:
         packages = self.store.list_packages()
@@ -818,8 +839,6 @@ class AgentAssemblyService:
                 shutil.rmtree(path)
 
         self.store.delete_package(package_id, version)
-        if package_id in PLUGIN_FACTORIES:
-            self.store.upsert_package(self.instantiate_plugin(package_id).package_model())
         logger.info("Plugin package uninstalled package_id=%s version=%s", package_id, version)
         return {"plugin_package": package, "uninstalled": True}
 
@@ -1055,8 +1074,6 @@ class AgentAssemblyService:
         package_version: str | None = None,
     ) -> PluginBase:
         merged = deep_merge(self.plugin_config_overrides.get(package_id, {}), config or {})
-        if package_id == "memory.file" and "path" not in merged:
-            merged["path"] = str(self.runtime_dir / "memory.jsonl")
         try:
             package = self.store.get_package(package_id, package_version)
         except KeyError:
@@ -1068,8 +1085,6 @@ class AgentAssemblyService:
                 raise KeyError(f"installed plugin package is missing runtime entrypoint: {package_id}")
             plugin_class = load_installed_plugin_class(installed_path, entrypoint)
             return plugin_class(merged or None, instance_id=instance_id)
-        if package_id in PLUGIN_FACTORIES:
-            return PLUGIN_FACTORIES[package_id](merged or None, instance_id=instance_id)
         package = package or self.store.get_package(package_id, package_version)
         installed_path = package.get("installed_path")
         entrypoint = package.get("entrypoint")
@@ -1220,10 +1235,6 @@ class AgentAssemblyService:
         package_version = str(package.get("version", "1.0.0"))
         default_config = self._default_instance_config(package_id, package_version)
         raw_config = deep_merge(default_config, dict(spec.get("config") or {}))
-        if package_id == "memory.file" and "path" not in raw_config:
-            raw_config["path"] = str(self.runtime_dir / f"{agent_id}-{uuid4().hex[:8]}-memory.jsonl")
-        elif package_id == "memory.file" and not (spec.get("config") or {}).get("path"):
-            raw_config["path"] = str(self.runtime_dir / f"{agent_id}-{uuid4().hex[:8]}-memory.jsonl")
         self._validate_instance_config(package_id, raw_config, package_version)
         encrypted_paths = self._encrypted_config_paths(package_id, package_version)
         config, secret_refs = self._split_config_secrets(raw_config, encrypted_paths, persist=persist_secrets)

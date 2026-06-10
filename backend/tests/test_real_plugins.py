@@ -237,7 +237,7 @@ class SlowToolCallingModelPlugin(ScriptedModelPlugin):
 def build_scripted_kernel(memory_path: Path | None = None) -> AgentKernel:
     kernel = AgentKernel()
     kernel.load_plugins([
-        FileMemoryPlugin({"path": str(memory_path) if memory_path else None}),
+        FileMemoryPlugin({"memory_dir": str(memory_path) if memory_path else None}),
         SkillRegistryPlugin(),
         ScriptedModelPlugin(),
         ToolRuntimePlugin(),
@@ -251,7 +251,7 @@ def build_scripted_kernel(memory_path: Path | None = None) -> AgentKernel:
 def build_memory_aware_kernel(memory_path: Path) -> AgentKernel:
     kernel = AgentKernel()
     kernel.load_plugins([
-        FileMemoryPlugin({"path": str(memory_path)}),
+        FileMemoryPlugin({"memory_dir": str(memory_path)}),
         MemoryAwareModelPlugin(),
         ToolRuntimePlugin(),
         ReactAgentLoopPlugin(),
@@ -263,7 +263,7 @@ def build_memory_aware_kernel(memory_path: Path) -> AgentKernel:
 def build_streaming_kernel(memory_path: Path | None = None, skill_dir: Path | None = None) -> AgentKernel:
     kernel = AgentKernel()
     kernel.load_plugins([
-        FileMemoryPlugin({"path": str(memory_path) if memory_path else None}),
+        FileMemoryPlugin({"memory_dir": str(memory_path) if memory_path else None}),
         SkillRegistryPlugin({"skill_dirs": [str(skill_dir)]} if skill_dir else None),
         ScriptedStreamingModelPlugin(),
         ToolRuntimePlugin(),
@@ -276,7 +276,7 @@ def build_streaming_kernel(memory_path: Path | None = None, skill_dir: Path | No
 
 
 def test_react_loop_uses_model_chat_capability_and_tool_observations(tmp_path):
-    kernel = build_scripted_kernel(tmp_path / "memory.jsonl")
+    kernel = build_scripted_kernel(tmp_path / "memory")
 
     result = kernel.invoke("agent.run", {"message": "please add 2+5"}).payload
 
@@ -292,7 +292,7 @@ def test_react_loop_streams_model_deltas_tools_and_context_compression(tmp_path)
     helper = skill_dir / "math-helper"
     helper.mkdir(parents=True)
     (helper / "SKILL.md").write_text("---\nname: math-helper\ndescription: Use math.add for arithmetic.\n---\n# Math Helper\nUse math.add.")
-    kernel = build_streaming_kernel(tmp_path / "memory.jsonl", skill_dir)
+    kernel = build_streaming_kernel(tmp_path / "memory", skill_dir)
 
     events = list(kernel.stream("agent.stream", {"message": "please add 2+5"}, {"agent_id": "agent-test"}))
 
@@ -309,7 +309,7 @@ def test_react_loop_streams_model_deltas_tools_and_context_compression(tmp_path)
 def test_react_loop_forwards_model_delta_before_stream_failure(tmp_path):
     kernel = AgentKernel()
     kernel.load_plugins([
-        FileMemoryPlugin({"path": str(tmp_path / "memory.jsonl")}),
+        FileMemoryPlugin({"memory_dir": str(tmp_path / "memory")}),
         SkillRegistryPlugin(),
         FailingAfterDeltaStreamingModelPlugin(),
         ToolRuntimePlugin(),
@@ -326,30 +326,46 @@ def test_react_loop_forwards_model_delta_before_stream_failure(tmp_path):
 
 
 def test_file_memory_persists_between_plugin_instances(tmp_path):
-    memory_path = tmp_path / "memory.jsonl"
-    first = build_scripted_kernel(memory_path)
-    first.invoke("memory.write", {"text": "persistent plugin memory", "metadata": {"kind": "note"}})
+    memory_dir = tmp_path / "memory"
+    first = build_scripted_kernel(memory_dir)
+    first.invoke(
+        "memory.write",
+        {
+            "path": "project.md",
+            "description": "Persistent plugin memory",
+            "content": "Persistent plugin memory is stored as markdown.",
+        },
+    )
 
-    second = build_scripted_kernel(memory_path)
-    result = second.invoke("memory.query", {"query": "plugin memory", "limit": 5}).payload
+    second = build_scripted_kernel(memory_dir)
+    index = second.invoke("memory.read", {"path": "MEMORY.md"}).payload["result"]
+    result = second.invoke("memory.read", {"path": "project.md"}).payload["result"]
 
-    assert result["items"][0]["text"] == "persistent plugin memory"
+    assert index["entries"] == [{"path": "project.md", "description": "Persistent plugin memory"}]
+    assert result["content"] == "Persistent plugin memory is stored as markdown."
 
 
 def test_react_loop_injects_recent_memory_into_model_context(tmp_path):
-    memory_path = tmp_path / "memory.jsonl"
-    first = build_memory_aware_kernel(memory_path)
-    first.invoke("agent.run", {"message": "你好，请记住我的key: 123987"}).payload
+    memory_dir = tmp_path / "memory"
+    first = build_memory_aware_kernel(memory_dir)
+    first.invoke(
+        "memory.write",
+        {
+            "path": "user.md",
+            "description": "User key is 123987",
+            "content": "The user's key is 123987.",
+        },
+    )
 
-    second = build_memory_aware_kernel(memory_path)
+    second = build_memory_aware_kernel(memory_dir)
     result = second.invoke("agent.run", {"message": "我刚才输入的key是多少？"}).payload
 
     assert result["answer"] == "你刚才输入的 key 是 123987"
-    assert any("123987" in item["text"] for item in result["memory"])
+    assert result["memory"] == [{"path": "user.md", "description": "User key is 123987"}]
 
 
 def test_react_loop_injects_session_history_into_model_context(tmp_path):
-    kernel = build_memory_aware_kernel(tmp_path / "memory.jsonl")
+    kernel = build_memory_aware_kernel(tmp_path / "memory")
 
     result = kernel.invoke(
         "agent.run",
@@ -373,6 +389,16 @@ def test_skill_registry_loads_skill_markdown_files(tmp_path):
 
     assert listed[0]["skill_id"] == "debugger"
     assert listed[0]["description"] == "Debug carefully."
+
+
+def test_skill_registry_does_not_ship_default_skills():
+    kernel = AgentKernel()
+    kernel.load_plugin(SkillRegistryPlugin())
+    kernel.start_all()
+
+    listed = kernel.invoke("skill.list", {}).payload["skills"]
+
+    assert listed == []
 
 
 def test_skill_registry_exposes_activation_and_file_read_tools(tmp_path):

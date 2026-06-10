@@ -2,7 +2,7 @@ descriptor:
   id: skill.registry
   version: 1.0.0
   name: 技能注册表
-  description: 加载本地 SKILL.md 技能文件，并提供技能查询能力。
+  description: 加载本地 SKILL.md 技能文件，并提供技能列表、激活和文件读取能力。
   categories: [skill]
   tags: [技能, 注册表, 本地]
   config_schema_ref: schema://skill.registry.config.v1
@@ -23,7 +23,7 @@ resources:
   - kind: skill
     id: registry
     title: Skill Registry
-    description: Lists and retrieves local markdown skills.
+    description: Lists configured local markdown skills and exposes on-demand activation and file reads.
     invoke_capability: skill.list
     schema_refs:
       list_input: schema://skill.list.input.v1

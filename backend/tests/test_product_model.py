@@ -32,7 +32,7 @@ def test_plugin_packages_and_agent_instances_are_persisted_in_sqlite(tmp_path):
         assert sum(1 for package in packages for resource in package["resources"] if resource["kind"] == "model") >= 3
         readable_names = {package["package_id"]: package["name"] for package in packages}
         assert readable_names == {
-            "agent.loop.react": "ReAct 智能体循环",
+            "agent.loop.react": "ReAct 智能体循环 v2",
             "context.compressor.summary": "上下文摘要压缩",
             "context.manager": "上下文管理器",
             "mcp.bridge": "MCP 桥接器",
@@ -58,7 +58,7 @@ def test_plugin_packages_and_agent_instances_are_persisted_in_sqlite(tmp_path):
                 "name": "Product Agent",
                 "description": "Uses plugin instances",
                 "plugin_instances": [
-                    {"package_id": "memory.file", "display_name": "Private Memory", "config": {"path": str(tmp_path / "agent-memory.jsonl")}},
+                    {"package_id": "memory.file", "display_name": "Private Memory", "config": {"memory_dir": str(tmp_path / "agent-memory")}},
                     {"package_id": "skill.registry"},
                     {"package_id": "model.openai_compatible", "config": {"api_key": "secret-key", "model": "local-model"}},
                     {"package_id": "tool.runtime"},
@@ -169,7 +169,7 @@ def test_agent_update_can_replace_plugin_instances_and_preserve_existing_config(
             {
                 "name": "Editable Agent",
                 "plugin_instances": [
-                    {"package_id": "memory.file", "config": {"path": str(tmp_path / "editable-memory.jsonl")}},
+                    {"package_id": "memory.file", "config": {"memory_dir": str(tmp_path / "editable-memory")}},
                     {"package_id": "model.openai_compatible", "config": {"api_key": "real-secret", "model": "first-model"}},
                     {"package_id": "agent.loop.react"},
                 ],
@@ -281,12 +281,13 @@ def test_agent_runtime_reports_provider_conflicts_and_explicit_bindings(tmp_path
         base = server.base_url
         def instances(prefix):
             return [
-                {"package_id": "memory.file", "instance_id": f"{prefix}-memory", "config": {"path": str(tmp_path / f"{prefix}-memory.jsonl")}},
+                {"package_id": "memory.file", "instance_id": f"{prefix}-memory", "config": {"memory_dir": str(tmp_path / f"{prefix}-memory")}},
                 {"package_id": "skill.registry", "instance_id": f"{prefix}-skills"},
                 {"package_id": "model.openrouter", "instance_id": f"{prefix}-openrouter", "config": {"api_key": "test-key"}},
                 {"package_id": "model.deepseek", "instance_id": f"{prefix}-deepseek", "config": {"api_key": "test-key"}},
                 {"package_id": "tool.runtime", "instance_id": f"{prefix}-tool-runtime"},
                 {"package_id": "tool.basic", "instance_id": f"{prefix}-tools"},
+                {"package_id": "mcp.bridge", "instance_id": f"{prefix}-mcp"},
                 {"package_id": "agent.loop.react", "instance_id": f"{prefix}-loop"},
             ]
 

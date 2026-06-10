@@ -2,7 +2,7 @@ descriptor:
   id: agent.loop.react
   version: 1.0.0
   name: ReAct 智能体循环
-  description: 基于模型推理、工具发现和记忆写入运行智能体对话。
+  description: 基于模型推理、工具发现和 Markdown 记忆索引运行智能体对话。
   categories: [agent_loop]
   tags: [智能体, 推理, 工具调用]
   config_schema_ref: schema://agent.loop.react.config.v1
@@ -10,7 +10,7 @@ descriptor:
     - capability: model.chat
       version: ">=1.0 <2.0"
       required: true
-    - capability: memory.query
+    - capability: memory.read
       version: ">=1.0 <2.0"
       required: true
     - capability: memory.write
@@ -35,7 +35,7 @@ resources:
   - kind: agent_loop
     id: react
     title: ReAct Loop
-    description: Runs a model-driven ReAct loop for an Agent.
+    description: Runs a model-driven ReAct loop for an Agent with Markdown memory index context.
     invoke_capability: agent.run
     schema_refs:
       input: schema://agent.run.input.v1

@@ -2,7 +2,7 @@ descriptor:
   id: agent.loop.react
   version: 2.0.0
   name: ReAct 智能体循环 v2
-  description: 基于模型推理、工具发现、Skills 注入和 MCP 工具接入运行智能体对话。
+  description: 基于模型推理、工具发现、Skills 目录提示和 MCP 工具接入运行智能体对话。
   categories:
   - agent_loop
   tags:
@@ -16,7 +16,7 @@ descriptor:
   - capability: model.chat
     version: '>=1.0 <2.0'
     required: true
-  - capability: memory.query
+  - capability: memory.read
     version: '>=1.0 <2.0'
     required: true
   - capability: memory.write
@@ -105,6 +105,15 @@ schemas:
             - warn
             - fail_run
             default: warn
+      memory:
+        type: object
+        title: Memory
+        additionalProperties: false
+        properties:
+          enabled:
+            type: boolean
+            title: Auto Memory
+            default: true
       tools:
         type: object
         title: Tools

@@ -14,15 +14,16 @@ Python backend for the pluginized Agent platform.
 - Streaming Agent runs through plugin capabilities: `Plugin.stream()`, `AgentKernel.stream()`, `agent.stream`, `model.chat.stream`, and HTTP SSE.
 - Runtime diagnostics and discovery for Agent assembly, including capability candidates, dependency status, provider conflicts, explicit capability bindings, and startup order.
 - Runtime diagnostics include plugin startup failures such as missing required provider config.
-- ReAct Agent Loop receives current session history from the host runtime, loads recent plugin memory into the model context before each run, optionally injects a Skills catalog and MCP tool context when those plugins are assembled, applies configured tool-call timeouts, and writes the user message, assistant answer, and tool traces back to memory.
+- ReAct Agent Loop receives current session history from the host runtime, injects the Markdown memory index into model context, optionally injects a Skills catalog and MCP tool context when those plugins are assembled, and applies configured tool-call timeouts. Durable memory writes happen through the `memory.write` tool.
 - Local plugin marketplace simulation:
   - The frontend marketplace upload flow accepts plugin directories or `.pluginpkg` files.
   - `plugin-market/` stores uploaded marketplace packages internally during local development.
   - `.plugin-agent/installed-plugins/` stores installed plugin packages by `package_id/version`.
-  - `GET /api/marketplace/plugins` lists marketplace packages; `GET /api/installed-plugin-packages` lists installed and built-in packages available for Agent assembly.
-  - Agent assembly can load both built-in plugins and installed external plugins. The newest package version is selected by default; installed packages win over built-in compatibility implementations when the `package_id` and version are the same.
+  - On startup, the assembly service installs the default package set from `plugin-market/` when those packages are present.
+  - `GET /api/marketplace/plugins` lists marketplace packages; `GET /api/installed-plugin-packages` lists installed packages available for Agent assembly.
+  - Agent assembly loads installed plugin packages. The newest installed package version is selected by default.
   - The installed plugin view shows one active version per `package_id`. Installing another version switches the active version and removes unused older installs; versions pinned by existing Agents are retained for reproducibility but hidden from the installed plugin list.
-- Built-in plugins:
+- Default auto-installed marketplace packages:
   - `agent.loop.react`
   - `model.openai_compatible`
   - `model.openrouter`
@@ -35,7 +36,6 @@ Python backend for the pluginized Agent platform.
   - `context.manager`
   - `mcp.bridge`
 - Marketplace plugins include:
-  - installable copies of the core built-in packages under `plugin-market/`
   - `agent.loop.codex_bridge`
   - `agent.loop.claude_code_bridge`
   - `context.compressor.model`
@@ -70,7 +70,7 @@ some_plugin/
   plugin.py
 ```
 
-Current built-in compatibility implementations still live under `src/plugin_agent/plugins/`:
+Compatibility implementations and direct provider test fixtures still live under `src/plugin_agent/plugins/`:
 
 ```text
 some_plugin/
@@ -80,7 +80,7 @@ some_plugin/
   __init__.py
 ```
 
-External/productized plugin packages must use `plugin.yaml`.
+External/productized plugin packages must use `plugin.yaml`; product package registration should happen through the marketplace install flow rather than source-tree registration.
 
 Manifest responsibilities:
 
@@ -168,7 +168,7 @@ Example instance config:
 
 Chat sessions are product/runtime state, not plugin state. The host stores `sessions` and `session_messages` for each Agent and passes recent session messages to the selected Agent Loop as `context["history_messages"]`.
 
-Memory plugins remain responsible for longer-lived or semantic memory capabilities such as `memory.query`, `memory.write`, and retrieval policies. Agent Loop plugins may combine both sources: deterministic session history from the host plus optional long-term memory from memory capabilities. The built-in file memory stores the current `agent_id` and `session_id` in automatic memory metadata and filters queries by that scope, so separate chat sessions do not leak remembered messages into each other.
+Memory plugins remain responsible for longer-lived or semantic memory capabilities such as `memory.read` and `memory.write`. Agent Loop plugins may combine deterministic session history from the host with durable memory indexes from memory capabilities. The built-in file memory stores `MEMORY.md` plus Markdown files such as `user.md` and `project.md`; ReAct loops inject the memory index and let the model call memory tools when it needs details or durable writes.
 
 Context rewriting is plugin-composed. Agent Loop plugins call `context.compress` when it is available. The built-in `context.manager` provides that capability, delegates summarization to a selected `context.compressor.compress` provider, and returns replacement messages for continued model reasoning. `context.compressor.summary` is a simple local transcript compactor, while `context.compressor.model` depends on `model.chat` and uses the selected model provider to generate a handoff summary.
 

@@ -1,14 +1,14 @@
 # Plugin Mechanism
 
-Use this reference when designing plugin contracts, manifests, lifecycle behavior, built-in registration, or tests.
+Use this reference when designing plugin contracts, manifests, lifecycle behavior, default marketplace installation, or tests.
 
 ## Source Map
 
 - Public SDK: `backend/src/plugin_agent_sdk/`
 - Private kernel: `backend/src/plugin_agent/kernel.py`
 - Marketplace plugins: `plugin-market/`
-- Built-in compatibility plugins: `backend/src/plugin_agent/plugins/`
-- Built-in registration and product model: `backend/src/plugin_agent/assembly.py`
+- Compatibility implementations and provider test fixtures: `backend/src/plugin_agent/plugins/`
+- Default marketplace installation and product model: `backend/src/plugin_agent/assembly.py`
 - Tests: `backend/tests/test_sdk.py`, `test_builtin_plugins.py`, `test_real_plugins.py`, `test_kernel.py`, `test_product_model.py`
 
 ## Uploadable Plugin Layout
@@ -24,9 +24,9 @@ Use this for new product plugins before uploading through the frontend marketpla
 
 `plugin.yaml` must include `runtime.type: python.in_process` and `runtime.entrypoint: plugin.py:<PluginClass>` so upload/install validation can load it. Do not write plugin source directly into `.plugin-agent/installed-plugins/`; use the marketplace upload/install flow instead. `plugin-market/` is the local development storage behind that flow, not a user-facing destination.
 
-## Built-in Plugin Layout
+## Compatibility Plugin Layout
 
-Use this only for compatibility/runtime plugins that must ship as part of the backend host:
+Use this only for compatibility/runtime helpers that must ship as part of the backend host or be imported by direct provider tests:
 
 ```text
 backend/src/plugin_agent/plugins/<plugin_folder>/
@@ -36,7 +36,7 @@ backend/src/plugin_agent/plugins/<plugin_folder>/
 └── plugin.py
 ```
 
-`plugin_agent_sdk.Plugin` discovers its own directory from the subclass file, then reads `plugin.yaml` if present, otherwise `manifest.yaml`. Current built-ins use `manifest.yaml`; marketplace plugins use `plugin.yaml`.
+`plugin_agent_sdk.Plugin` discovers its own directory from the subclass file, then reads `plugin.yaml` if present, otherwise `manifest.yaml`. Marketplace/product plugins use `plugin.yaml`; compatibility helpers may still use `manifest.yaml`.
 
 `config.yaml` contains default instance config. Constructor overrides are shallow-merged over file config.
 
@@ -148,14 +148,13 @@ For a new marketplace plugin:
 4. Upload/install through the marketplace flow or API in tests.
 5. Add marketplace tests that confirm it appears in `GET /api/marketplace/plugins` and not in `GET /api/installed-plugin-packages` until installed.
 
-For a new built-in plugin:
+For a default product plugin:
 
-1. Add the plugin folder under `backend/src/plugin_agent/plugins/`.
-2. Import the class in `backend/src/plugin_agent/assembly.py`.
-3. Add it to `PLUGIN_FACTORIES`.
-4. Add it to `DEFAULT_AGENT_PLUGIN_IDS` only if every default Agent should include it.
-5. If legacy `build_default_kernel()` should include it, update `backend/src/plugin_agent/kernel.py`.
-6. Update frontend plugin metadata only when UI labels or selection behavior depend on it.
+1. Add or update the uploadable package under `plugin-market/`.
+2. Add the package ID to `DEFAULT_PLUGIN_INSTALLS` only if the backend should auto-install the latest marketplace version on startup when no version is installed yet.
+3. Add it to `DEFAULT_AGENT_PLUGIN_IDS` only if every default Agent should include it.
+4. If legacy `build_default_kernel()` should include it for direct tests, update `backend/src/plugin_agent/kernel.py`.
+5. Update frontend plugin metadata only when UI labels or selection behavior depend on it.
 
 ## Test Anchors
 

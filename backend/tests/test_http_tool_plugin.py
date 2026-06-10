@@ -52,6 +52,11 @@ class CapturingHandler(BaseHTTPRequestHandler):
 
 
 def _install_http_tool(state):
+    if not any(package["package_id"] == "tool.runtime" for package in state.assembly.list_installed_plugin_packages()):
+        runtime_dir = ROOT_DIR / "plugin-market" / "tool_runtime_plugin"
+        upload = state.assembly.reserve_upload({"path": str(runtime_dir)})
+        assert upload["plugin_package"]["package_id"] == "tool.runtime"
+        state.assembly.install_market_plugin({"package_id": "tool.runtime"})
     package_dir = ROOT_DIR / "plugin-market" / "http-tool-plugin"
     upload = state.assembly.reserve_upload({"path": str(package_dir)})
     assert upload["plugin_package"]["package_id"] == "tool.http_request"
