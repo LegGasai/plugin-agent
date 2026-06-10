@@ -135,7 +135,7 @@ function SessionRail({
     <aside className="session-rail">
       <div className="session-rail-head">
         <strong><History size={15} />历史对话</strong>
-        <button className="icon-button session-create-button" onClick={createSession} disabled={disabled} title="新建对话" aria-label="新建对话">
+        <button className="icon-button session-create-button" onClick={() => createSession()} disabled={disabled} title="新建对话" aria-label="新建对话">
           <Plus size={15} />
         </button>
       </div>

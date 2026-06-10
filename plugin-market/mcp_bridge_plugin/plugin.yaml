@@ -62,6 +62,7 @@ schemas:
               type: object
               additionalProperties:
                 type: string
+                x-secret: true
       request_timeout_seconds:
         type: integer
         title: Request Timeout Seconds

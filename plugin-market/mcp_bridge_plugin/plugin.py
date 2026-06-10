@@ -63,15 +63,23 @@ class StdioMCPClient:
         assert self.process.stdout is not None
         header = b""
         while b"\r\n\r\n" not in header:
-            self._wait_for_stdout(deadline)
-            chunk = self.process.stdout.read(1)
-            if not chunk:
-                raise RuntimeError("MCP server closed stdout")
-            header += chunk
+            header += self._read_exact(1, deadline)
         length_line = [line for line in header.decode("utf-8").split("\r\n") if line.lower().startswith("content-length:")][0]
         size = int(length_line.split(":", 1)[1].strip())
-        self._wait_for_stdout(deadline)
-        return json.loads(self.process.stdout.read(size).decode("utf-8"))
+        return json.loads(self._read_exact(size, deadline).decode("utf-8"))
+
+    def _read_exact(self, size: int, deadline: float) -> bytes:
+        assert self.process.stdout is not None
+        chunks = []
+        remaining_size = size
+        while remaining_size > 0:
+            self._wait_for_stdout(deadline)
+            chunk = os.read(self.process.stdout.fileno(), remaining_size)
+            if not chunk:
+                raise RuntimeError("MCP server closed stdout")
+            chunks.append(chunk)
+            remaining_size -= len(chunk)
+        return b"".join(chunks)
 
     def _wait_for_stdout(self, deadline: float) -> None:
         assert self.process.stdout is not None

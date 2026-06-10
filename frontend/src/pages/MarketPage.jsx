@@ -73,7 +73,8 @@ export function MarketPage({ packages, apiBase, onMarketplaceChanged }) {
       .sort((left, right) => left.localeCompare(right, 'zh-Hans-CN'))
   ), [installedPackages, marketPluginPackages]);
 
-  const activePackages = activeTab === 'marketplace' ? marketPluginPackages : installedPackages;
+  const marketPackageCards = useMemo(() => groupMarketPackagesById(marketPluginPackages), [marketPluginPackages]);
+  const activePackages = activeTab === 'marketplace' ? marketPackageCards : installedPackages;
   const filteredPackages = useMemo(() => activePackages.filter((pluginPackage) => {
     const text = [
       pluginPackage.name,
@@ -95,12 +96,25 @@ export function MarketPage({ packages, apiBase, onMarketplaceChanged }) {
       .sort(compareVersionsDesc);
   }, [activeTab, marketPluginPackages, selectedPackage]);
 
+  useEffect(() => {
+    if (!selectedPackage) return;
+    const sourcePackages = activeTab === 'marketplace' ? marketPluginPackages : installedPackages;
+    const refreshedPackage = sourcePackages.find((pluginPackage) => (
+      pluginPackage.package_id === selectedPackage.package_id && pluginPackage.version === selectedPackage.version
+    ));
+    if (refreshedPackage && refreshedPackage !== selectedPackage) {
+      setSelectedPackage(refreshedPackage);
+    }
+  }, [activeTab, installedPackages, marketPluginPackages, selectedPackage]);
+
   async function refreshMarketplaceInfo() {
     try {
       const data = await loadMarketplace();
       setMarketInfo(data);
+      return data;
     } catch (event) {
       setActionError(`读取插件包失败：${event.message}`);
+      return null;
     }
   }
 
@@ -133,15 +147,16 @@ export function MarketPage({ packages, apiBase, onMarketplaceChanged }) {
     event.target.value = '';
   }
 
-  async function installPackage(pluginPackage) {
+  async function installPackage(pluginPackage, options = {}) {
+    const updateSelected = options.updateSelected !== false;
     if (pluginPackage.has_newer_version) {
-      setPendingConfirm({ type: 'install-old-version', pluginPackage });
+      setPendingConfirm({ type: 'install-old-version', pluginPackage, updateSelected });
       return;
     }
-    await performInstallPackage(pluginPackage);
+    await performInstallPackage(pluginPackage, { updateSelected });
   }
 
-  async function performInstallPackage(pluginPackage) {
+  async function performInstallPackage(pluginPackage, { updateSelected = true } = {}) {
     const actionLabel = installActionLabel(pluginPackage);
     const actionVerb = actionLabel === '升级' ? '升级' : actionLabel === '切换版本' ? '切换' : '安装';
     setActionStatus(`正在${actionVerb} ${pluginPackage.name} v${pluginPackage.version}`);
@@ -149,12 +164,14 @@ export function MarketPage({ packages, apiBase, onMarketplaceChanged }) {
     try {
       await installMarketPlugin(pluginPackage.package_id, pluginPackage.version);
       setActionStatus(`${pluginPackage.name} v${pluginPackage.version} 已${actionVerb}`);
-      setSelectedPackage((current) => (
-        current?.package_id === pluginPackage.package_id && current?.version === pluginPackage.version
-          ? { ...current, installed: true }
-          : current
+      const refreshed = await refreshMarketplaceInfo();
+      const refreshedPackages = (refreshed?.plugin_packages || refreshed?.market_plugin_packages || []).map(normalizePackage);
+      const refreshedSelection = refreshedPackages.find((item) => (
+        item.package_id === pluginPackage.package_id && item.version === pluginPackage.version
       ));
-      await refreshMarketplaceInfo();
+      if (updateSelected && refreshedSelection) {
+        setSelectedPackage(refreshedSelection);
+      }
       await onMarketplaceChanged?.();
     } catch (event) {
       setActionError(`安装失败：${event.message}`);
@@ -186,7 +203,7 @@ export function MarketPage({ packages, apiBase, onMarketplaceChanged }) {
     const action = pendingConfirm;
     setPendingConfirm(null);
     if (action.type === 'install-old-version') {
-      await performInstallPackage(action.pluginPackage);
+      await performInstallPackage(action.pluginPackage, { updateSelected: action.updateSelected });
       return;
     }
     if (action.type === 'uninstall') {
@@ -208,7 +225,7 @@ export function MarketPage({ packages, apiBase, onMarketplaceChanged }) {
           </button>
           <button className={activeTab === 'marketplace' ? 'market-tab active' : 'market-tab'} onClick={() => setActiveTab('marketplace')}>
             探索 Marketplace
-            <span>{marketPluginPackages.length}</span>
+            <span>{marketPackageCards.length}</span>
           </button>
         </div>
         <div className="market-actions">
@@ -302,7 +319,7 @@ export function MarketPage({ packages, apiBase, onMarketplaceChanged }) {
               return (
                 <article
                   className="market-card"
-                  key={`${pluginPackage.package_id}-${pluginPackage.version}`}
+                  key={activeTab === 'marketplace' ? pluginPackage.package_id : `${pluginPackage.package_id}-${pluginPackage.version}`}
                   onClick={() => openPackageDetails(pluginPackage)}
                 >
                   <div className={`market-plugin-icon kind-${pluginKindClass(primaryKind)}`} title={resourceLabel(primaryKind)}>
@@ -331,7 +348,7 @@ export function MarketPage({ packages, apiBase, onMarketplaceChanged }) {
                     </div>
                     {activeTab === 'marketplace' && (
                       <div className="market-card-actions">
-                        <button className={`mini-button ${installActionClass(pluginPackage)}`} onClick={(event) => { event.stopPropagation(); installPackage(pluginPackage); }} disabled={pluginPackage.installed}>
+                        <button className={`mini-button ${installActionClass(pluginPackage)}`} onClick={(event) => { event.stopPropagation(); installPackage(pluginPackage, { updateSelected: false }); }} disabled={pluginPackage.installed}>
                           <InstallActionIcon pluginPackage={pluginPackage} size={14} />{installActionLabel(pluginPackage)}
                         </button>
                       </div>
@@ -600,6 +617,17 @@ function packageStatusLabel(pluginPackage, view) {
     return isNewerVersion(pluginPackage.version, pluginPackage.installed_version) ? '可升级' : '可切换';
   }
   return view === 'marketplace' ? '可安装' : '可用';
+}
+
+function groupMarketPackagesById(packages) {
+  const grouped = new Map();
+  for (const pluginPackage of packages) {
+    const current = grouped.get(pluginPackage.package_id);
+    if (!current || compareVersionsDesc(pluginPackage, current) < 0) {
+      grouped.set(pluginPackage.package_id, pluginPackage);
+    }
+  }
+  return Array.from(grouped.values()).sort((left, right) => left.package_id.localeCompare(right.package_id));
 }
 
 function isNewerVersion(version, installedVersion) {

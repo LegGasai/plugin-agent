@@ -135,6 +135,9 @@ def latest_version(versions: list[str]) -> str:
 
 
 def select_default_package(packages: list[dict[str, Any]]) -> dict[str, Any]:
+    installed_packages = [package for package in packages if package.get("source") == "installed"]
+    if installed_packages:
+        return max(installed_packages, key=installed_activity_sort_key)
     return max(
         packages,
         key=lambda package: (
@@ -142,6 +145,22 @@ def select_default_package(packages: list[dict[str, Any]]) -> dict[str, Any]:
             1 if package.get("source") == "installed" else 0,
         ),
     )
+
+
+def installed_activity_sort_key(package: dict[str, Any]) -> tuple[float, tuple[int, Any]]:
+    updated_at = package.get("updated_at")
+    if isinstance(updated_at, str):
+        try:
+            return (datetime.fromisoformat(updated_at).timestamp(), version_sort_key(str(package.get("version", "1.0.0"))))
+        except ValueError:
+            pass
+    installed_path = package.get("installed_path")
+    if installed_path:
+        try:
+            return (Path(installed_path).stat().st_mtime, version_sort_key(str(package.get("version", "1.0.0"))))
+        except OSError:
+            pass
+    return (0.0, version_sort_key(str(package.get("version", "1.0.0"))))
 
 
 class SecretStore:
@@ -315,23 +334,34 @@ class ProductStore:
 
     def list_packages(self) -> list[dict[str, Any]]:
         with self.connect() as conn:
-            rows = conn.execute("select package_json from plugin_packages order by package_id, version").fetchall()
-        return [json.loads(row["package_json"]) for row in rows]
+            rows = conn.execute("select package_json, updated_at from plugin_packages order by package_id, version").fetchall()
+        packages = []
+        for row in rows:
+            package = json.loads(row["package_json"])
+            package["updated_at"] = row["updated_at"]
+            packages.append(package)
+        return packages
 
     def get_package(self, package_id: str, version: str | None = None) -> dict[str, Any]:
         with self.connect() as conn:
             if version:
                 row = conn.execute(
-                    "select package_json from plugin_packages where package_id=? and version=?",
+                    "select package_json, updated_at from plugin_packages where package_id=? and version=?",
                     (package_id, version),
                 ).fetchone()
                 if row is None:
                     raise KeyError(f"unknown plugin package: {package_id}@{version}")
-                return json.loads(row["package_json"])
-            rows = conn.execute("select package_json from plugin_packages where package_id=?", (package_id,)).fetchall()
+                package = json.loads(row["package_json"])
+                package["updated_at"] = row["updated_at"]
+                return package
+            rows = conn.execute("select package_json, updated_at from plugin_packages where package_id=?", (package_id,)).fetchall()
         if not rows:
             raise KeyError(f"unknown plugin package: {package_id}")
-        packages = [json.loads(row["package_json"]) for row in rows]
+        packages = []
+        for row in rows:
+            package = json.loads(row["package_json"])
+            package["updated_at"] = row["updated_at"]
+            packages.append(package)
         return select_default_package(packages)
 
     def delete_package(self, package_id: str, version: str | None = None) -> None:
@@ -1214,7 +1244,6 @@ class AgentAssemblyService:
             existing_config = self._hydrate_config(existing["config"], existing.get("secret_refs", {})) if existing else {}
             sanitized_config = self._strip_redacted_secret_placeholders(dict(spec.get("config") or {}), encrypted_paths)
             merged_config = deep_merge(existing_config, sanitized_config)
-
             prepared.append(
                 {
                     "instance_id": existing["instance_id"] if existing else spec.get("instance_id"),
@@ -1293,14 +1322,16 @@ class AgentAssemblyService:
 
     def _describe_instance(self, instance: dict[str, Any]) -> dict[str, Any]:
         config = self._hydrate_config(instance["config"], instance.get("secret_refs", {}), reveal=False)
+        package = self.store.get_package(instance["package_id"], instance.get("package_version"))
         return {
             "instance_id": instance["instance_id"],
             "agent_id": instance["agent_id"],
             "package_id": instance["package_id"],
             "package_version": instance.get("package_version", "1.0.0"),
+            "plugin_package": package,
             "display_name": instance["display_name"],
             "config": self._redact_config_for_package(instance["package_id"], config, instance.get("package_version")),
-            "config_schema_ref": self.store.get_package(instance["package_id"], instance.get("package_version")).get("config_schema_ref"),
+            "config_schema_ref": package.get("config_schema_ref"),
             "secret_refs": sorted(instance.get("secret_refs", {}).keys()),
             "state": instance["state"],
             "generation": instance["generation"],
