@@ -13,15 +13,6 @@ services:
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     environment:
-      - PLUGIN_AGENT_MODEL_API_KEY
-      - PLUGIN_AGENT_MODEL_NAME
-      - PLUGIN_AGENT_MODEL_BASE_URL
-      - PLUGIN_AGENT_OPENROUTER_API_KEY
-      - PLUGIN_AGENT_OPENROUTER_MODEL
-      - PLUGIN_AGENT_OPENROUTER_BASE_URL
-      - PLUGIN_AGENT_DEEPSEEK_API_KEY
-      - PLUGIN_AGENT_DEEPSEEK_MODEL
-      - PLUGIN_AGENT_DEEPSEEK_BASE_URL
       - PLUGIN_AGENT_MARKET_DIR=${PLUGIN_AGENT_MARKET_DIR:-/app/plugin-market}
     volumes:
       - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/plugin-agent-data:/app/.plugin-agent
