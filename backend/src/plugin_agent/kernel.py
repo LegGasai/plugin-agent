@@ -7,19 +7,19 @@ from jsonschema import ValidationError, validate
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
-from plugin_agent_sdk import Plugin as PluginBase
 from plugin_agent_sdk import (
     CapabilityBinding,
     CapabilityCandidate,
     CapabilitySpec,
     InvokeResponse,
     PluginState,
-    RuntimeDiagnostic,
     ResourceBinding,
     ResourceSpec,
+    RuntimeDiagnostic,
     SchemaDefinition,
     ToolDefinition,
 )
+from plugin_agent_sdk import Plugin as PluginBase
 
 
 class KernelInvokeError(ValueError):
@@ -588,25 +588,6 @@ class AgentKernel:
 
 
 def build_default_kernel() -> AgentKernel:
-    from plugin_agent.plugins.agent_loop_react.plugin import ReactAgentLoopPlugin
-    from plugin_agent.plugins.mcp_bridge_plugin.plugin import MCPBridgePlugin
-    from plugin_agent.plugins.memory_file.plugin import FileMemoryPlugin
-    from plugin_agent.plugins.model_openai_compatible.plugin import OpenAICompatibleModelPlugin
-    from plugin_agent.plugins.skill_registry.plugin import SkillRegistryPlugin
-    from plugin_agent.plugins.tool_basic.plugin import BasicToolPlugin
-    from plugin_agent.plugins.tool_runtime_plugin.plugin import ToolRuntimePlugin
+    from plugin_agent.services.assembly_service import DEFAULT_AGENT_PLUGIN_IDS, AgentAssemblyService
 
-    kernel = AgentKernel()
-    kernel.load_plugins(
-        [
-            FileMemoryPlugin(),
-            SkillRegistryPlugin(),
-            OpenAICompatibleModelPlugin(),
-            ToolRuntimePlugin(),
-            BasicToolPlugin(),
-            MCPBridgePlugin(),
-            ReactAgentLoopPlugin(),
-        ]
-    )
-    kernel.start_all(raise_on_failed=False)
-    return kernel
+    return AgentAssemblyService().build_kernel(DEFAULT_AGENT_PLUGIN_IDS, raise_on_failed=False)

@@ -6,7 +6,6 @@ import sys
 from pathlib import Path
 from typing import TextIO
 
-
 DEFAULT_LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
 

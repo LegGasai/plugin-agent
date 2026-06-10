@@ -6,11 +6,11 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from plugin_agent_sdk import PluginPackage
 from plugin_agent.models.records import AgentRecord, PluginInstanceRecord, SessionMessageRecord, SessionRecord
 from plugin_agent.stores.secret_store import SecretStore
 from plugin_agent.utils.time import now_iso
 from plugin_agent.utils.versions import latest_version, select_default_package
+from plugin_agent_sdk import PluginPackage
 
 
 class ProductStore:

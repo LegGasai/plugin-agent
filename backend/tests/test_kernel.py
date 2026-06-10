@@ -1,7 +1,7 @@
 
 import pytest
 
-from plugin_agent.contracts import CapabilitySpec, DependencySpec, SchemaDefinition
+from plugin_agent.contracts import SchemaDefinition
 from plugin_agent.kernel import AgentKernel, KernelInvokeError, PluginBase, PluginState
 
 

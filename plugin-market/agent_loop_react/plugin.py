@@ -80,13 +80,18 @@ class ReactAgentLoopPlugin(PluginBase):
             if compressed is not None:
                 yield emit("context_compressed", compressed)
             try:
-                assistant, delta_events = self._model_turn(
+                assistant = None
+                for model_event in self._model_turn_events(
                     model_messages,
                     model_tool_payload,
                     {**context, "run_id": run_id, "turn": turn},
-                )
-                for delta in delta_events:
-                    yield emit("model_delta", {"delta": delta})
+                ):
+                    if model_event["type"] == "model_delta":
+                        yield emit("model_delta", {"delta": model_event["delta"]})
+                    elif model_event["type"] == "assistant_message":
+                        assistant = model_event["message"]
+                if assistant is None:
+                    raise RuntimeError("model stream ended without an assistant message")
             except Exception as exc:
                 final_answer = str(exc)
                 stop_reason = "error"
@@ -164,12 +169,12 @@ class ReactAgentLoopPlugin(PluginBase):
     def _safe_tool_name(self, tool_id: str) -> str:
         return tool_id.replace(".", "__").replace("-", "_")
 
-    def _model_turn(
+    def _model_turn_events(
         self,
         model_messages: list[dict[str, Any]],
         model_tool_payload: list[dict[str, Any]],
         context: dict[str, Any],
-    ) -> tuple[dict[str, Any], list[str]]:
+    ) -> Iterator[dict[str, Any]]:
         assert self.kernel is not None
         payload = {
             "system_prompt": self.config.get("system_prompt", ""),
@@ -184,13 +189,15 @@ class ReactAgentLoopPlugin(PluginBase):
                     delta = event.get("payload", {}).get("delta", "")
                     if delta:
                         deltas.append(delta)
+                        yield {"type": "model_delta", "delta": delta}
                 elif event["type"] == "assistant_message":
                     assistant = event.get("payload", {}).get("message")
             if assistant is None:
                 assistant = {"role": "assistant", "content": "".join(deltas), "tool_calls": []}
-            return assistant, deltas
+            yield {"type": "assistant_message", "message": assistant}
+            return
         assistant = self.kernel.invoke("model.chat", payload, context).payload["message"]
-        return assistant, []
+        yield {"type": "assistant_message", "message": assistant}
 
     def _selected_skills(self, user_text: str, context: dict[str, Any]) -> list[dict[str, Any]]:
         assert self.kernel is not None

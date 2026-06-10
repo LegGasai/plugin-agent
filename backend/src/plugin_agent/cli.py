@@ -8,9 +8,9 @@ from rich.console import Console
 from rich.table import Table
 
 from plugin_agent.assembly import AgentAssemblyService
-from plugin_agent.http_service import PluginAgentHTTPServer, create_app_state
 from plugin_agent.kernel import build_default_kernel
 from plugin_agent.logging_config import configure_logging
+from plugin_agent.server import PluginAgentHTTPServer, create_app_state
 
 app = typer.Typer(help="Pluginized Agent kernel v1")
 console = Console()

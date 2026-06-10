@@ -9,7 +9,16 @@ from typing import Any
 from uuid import uuid4
 
 from jsonschema import ValidationError, validate
-from plugin_agent_sdk import PluginPackage
+
+from plugin_agent.kernel import AgentKernel, PluginBase
+from plugin_agent.plugin_store import (
+    copy_package_to_market,
+    discover_installed_packages,
+    discover_market_packages,
+    install_market_package,
+    load_installed_plugin_class,
+    validate_plugin_package,
+)
 from plugin_agent.stores.product_store import ProductStore
 from plugin_agent.utils.config import (
     _encrypted_path_matches,
@@ -20,15 +29,7 @@ from plugin_agent.utils.config import (
 )
 from plugin_agent.utils.time import now_iso
 from plugin_agent.utils.versions import select_default_package, version_sort_key
-from plugin_agent.kernel import AgentKernel, PluginBase
-from plugin_agent.plugin_store import (
-    copy_package_to_market,
-    discover_installed_packages,
-    discover_market_packages,
-    install_market_package,
-    load_installed_plugin_class,
-    validate_plugin_package,
-)
+from plugin_agent_sdk import PluginPackage
 
 logger = logging.getLogger(__name__)
 
@@ -410,12 +411,18 @@ class AgentAssemblyService:
         plugin_ids: list[str] | None = None,
         configs: dict[str, dict[str, Any]] | None = None,
         capability_bindings: dict[str, str] | None = None,
+        raise_on_failed: bool = True,
     ) -> AgentKernel:
         instances = [
             self._create_instance_record("adhoc-agent", {"package_id": plugin_id, "config": (configs or {}).get(plugin_id, {})}, persist_secrets=False)
             for plugin_id in (plugin_ids or DEFAULT_AGENT_PLUGIN_IDS)
         ]
-        return self._build_kernel_from_instances(instances, agent_id="adhoc-agent", capability_bindings=capability_bindings or {})
+        return self._build_kernel_from_instances(
+            instances,
+            agent_id="adhoc-agent",
+            capability_bindings=capability_bindings or {},
+            raise_on_failed=raise_on_failed,
+        )
 
     def stream_agent(self, message: str, plugin_ids: list[str] | None = None, configs: dict[str, dict[str, Any]] | None = None) -> Any:
         kernel = self.build_kernel(plugin_ids, configs)

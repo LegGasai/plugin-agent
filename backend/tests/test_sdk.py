@@ -1,6 +1,6 @@
-from plugin_agent.kernel import AgentKernel
 import pytest
 
+from plugin_agent.kernel import AgentKernel
 from plugin_agent_sdk import Plugin, PluginState, SchemaDefinition, StreamEvent
 
 

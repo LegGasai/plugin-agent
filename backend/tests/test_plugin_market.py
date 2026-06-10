@@ -8,13 +8,12 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from plugin_test_utils import market_plugin_class
 
-from plugin_agent.kernel import KernelInvokeError
-from plugin_agent.kernel import AgentKernel
-from plugin_agent.http_service import PluginAgentHTTPServer, create_app_state
+from plugin_agent.kernel import AgentKernel, KernelInvokeError
 from plugin_agent.plugin_store import install_market_package, load_installed_plugin_class
-from plugin_agent_sdk import Plugin, PluginPackage
-
+from plugin_agent.server import PluginAgentHTTPServer, create_app_state
+from plugin_agent_sdk import Plugin
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 MARKET_FIXTURES_DIR = PROJECT_ROOT / "plugin-market"
@@ -1087,8 +1086,8 @@ class FailingSkillListPlugin(FakeSkillRegistryPlugin):
 
 
 def test_react_v2_injects_skills_and_mcp_tool_context(tmp_path):
-    from plugin_agent.plugins.memory_file.plugin import FileMemoryPlugin
-    from plugin_agent.plugins.tool_runtime_plugin.plugin import ToolRuntimePlugin
+    FileMemoryPlugin = market_plugin_class("memory_file")
+    ToolRuntimePlugin = market_plugin_class("tool_runtime_plugin")
 
     state = create_app_state(runtime_dir=tmp_path / "runtime")
     installed = state.assembly.install_market_plugin({"package_id": "agent.loop.react", "version": "2.0.0"})
@@ -1122,8 +1121,8 @@ def test_react_v2_injects_skills_and_mcp_tool_context(tmp_path):
 
 
 def test_react_v2_forwards_model_stream_deltas_as_they_arrive(tmp_path):
-    from plugin_agent.plugins.memory_file.plugin import FileMemoryPlugin
-    from plugin_agent.plugins.tool_runtime_plugin.plugin import ToolRuntimePlugin
+    FileMemoryPlugin = market_plugin_class("memory_file")
+    ToolRuntimePlugin = market_plugin_class("tool_runtime_plugin")
 
     state = create_app_state(runtime_dir=tmp_path / "runtime")
     installed = state.assembly.install_market_plugin({"package_id": "agent.loop.react", "version": "2.0.0"})
@@ -1152,8 +1151,8 @@ def test_react_v2_forwards_model_stream_deltas_as_they_arrive(tmp_path):
 
 
 def test_react_v2_warns_and_continues_when_optional_skill_list_fails(tmp_path):
-    from plugin_agent.plugins.memory_file.plugin import FileMemoryPlugin
-    from plugin_agent.plugins.tool_runtime_plugin.plugin import ToolRuntimePlugin
+    FileMemoryPlugin = market_plugin_class("memory_file")
+    ToolRuntimePlugin = market_plugin_class("tool_runtime_plugin")
 
     state = create_app_state(runtime_dir=tmp_path / "runtime")
     installed = state.assembly.install_market_plugin({"package_id": "agent.loop.react", "version": "2.0.0"})

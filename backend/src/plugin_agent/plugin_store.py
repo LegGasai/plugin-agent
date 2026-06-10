@@ -5,15 +5,13 @@ import re
 import shutil
 import sys
 import zipfile
-from pathlib import Path
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import yaml
 
 from plugin_agent_sdk import Plugin as PluginBase
 from plugin_agent_sdk.contracts import PluginPackage, ResourceSpec, RuntimeSpec, SchemaDefinition
-
 
 PLUGIN_PACKAGE_EXTENSION = ".pluginpkg"
 PACKAGE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")

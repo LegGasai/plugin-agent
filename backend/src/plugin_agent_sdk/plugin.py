@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import inspect
-from pathlib import Path
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import yaml
 
-from plugin_agent_sdk.contracts import PluginDescriptor, PluginPackage, PluginState, ResourceSpec, RuntimeSpec, SchemaDefinition
+from plugin_agent_sdk.contracts import (
+    PluginDescriptor,
+    PluginPackage,
+    PluginState,
+    ResourceSpec,
+    RuntimeSpec,
+    SchemaDefinition,
+)
 
 
 class Plugin:
