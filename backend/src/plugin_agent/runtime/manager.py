@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -19,6 +20,7 @@ from plugin_agent.runtime.protocol import HostMethod, PluginMethod, WorkerMethod
 from plugin_agent_sdk import PluginPackage, RuntimeSpec, SchemaDefinition
 
 logger = logging.getLogger(__name__)
+WORKER_CLEANUP_INTERVAL_SECONDS = 30.0
 
 
 class WorkerRuntimeError(RuntimeError):
@@ -51,6 +53,7 @@ class _WorkerConnection:
         self.host_python_path = host_python_path
         self.process: subprocess.Popen[str] | None = None
         self.lock = threading.Lock()
+        self.process_lock = threading.Lock()
         self.pending: dict[str, _PendingRequest] = {}
         self.streams: dict[str, queue.Queue[tuple[str, Any]]] = {}
         self.kernels_by_instance: dict[str, Any] = {}
@@ -64,24 +67,30 @@ class _WorkerConnection:
             return "stopped"
         return "running" if self.process.poll() is None else "stopped"
 
+    @property
+    def is_busy(self) -> bool:
+        with self.lock:
+            return bool(self.pending or self.streams)
+
     def start(self) -> None:
-        if self.process and self.process.poll() is None:
-            return
-        python = str(self.env_python or Path(sys.executable))
-        env = os.environ.copy()
-        env["PYTHONPATH"] = self.host_python_path
-        self.process = subprocess.Popen(
-            [python, "-m", "plugin_agent.worker_main"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=None,
-            text=True,
-            bufsize=1,
-            env=env,
-        )
-        self._reader_thread = threading.Thread(target=self._read_loop, daemon=True)
-        self._reader_thread.start()
-        logger.info("Plugin worker started key=%s pid=%s", self.key, self.process.pid)
+        with self.process_lock:
+            if self.process and self.process.poll() is None:
+                return
+            python = str(self.env_python or Path(sys.executable))
+            env = os.environ.copy()
+            env["PYTHONPATH"] = self.host_python_path
+            self.process = subprocess.Popen(
+                [python, "-m", "plugin_agent.worker_main"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=None,
+                text=True,
+                bufsize=1,
+                env=env,
+            )
+            self._reader_thread = threading.Thread(target=self._read_loop, daemon=True)
+            self._reader_thread.start()
+            logger.info("Plugin worker started key=%s pid=%s", self.key, self.process.pid)
 
     def shutdown(self) -> None:
         if not self.process:
@@ -101,22 +110,27 @@ class _WorkerConnection:
 
     def request(self, method: str, params: dict[str, Any], timeout: float | None) -> Any:
         request_id = self._send_request(method, params)
-        pending = self.pending[request_id]
-        if not pending.event.wait(timeout):
-            self.pending.pop(request_id, None)
-            raise TimeoutError(f"worker request timed out: {method}")
-        if pending.error:
-            raise WorkerRuntimeError(
-                str(pending.error.get("code") or "worker_error"),
-                str(pending.error.get("message") or "worker request failed"),
-                pending.error.get("details") or {},
-            )
-        return pending.result
+        with self.lock:
+            pending = self.pending[request_id]
+        try:
+            if not pending.event.wait(timeout):
+                raise TimeoutError(f"worker request timed out: {method}")
+            if pending.error:
+                raise WorkerRuntimeError(
+                    str(pending.error.get("code") or "worker_error"),
+                    str(pending.error.get("message") or "worker request failed"),
+                    pending.error.get("details") or {},
+                )
+            return pending.result
+        finally:
+            with self.lock:
+                self.pending.pop(request_id, None)
 
     def stream_request(self, method: str, params: dict[str, Any], timeout: float | None) -> Iterator[dict[str, Any]]:
         request_id = self._next_request_id()
         stream_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
-        self.streams[request_id] = stream_queue
+        with self.lock:
+            self.streams[request_id] = stream_queue
         self._send_request_with_id(request_id, method, params)
         try:
             while True:
@@ -135,8 +149,9 @@ class _WorkerConnection:
                     )
                 return
         finally:
-            self.streams.pop(request_id, None)
-            self.pending.pop(request_id, None)
+            with self.lock:
+                self.streams.pop(request_id, None)
+                self.pending.pop(request_id, None)
 
     def _send_request(self, method: str, params: dict[str, Any]) -> str:
         request_id = self._next_request_id()
@@ -205,8 +220,9 @@ class _WorkerConnection:
 
     def _handle_response(self, message: dict[str, Any]) -> None:
         request_id = str(message.get("id"))
-        pending = self.pending.get(request_id)
-        stream_queue = self.streams.get(request_id)
+        with self.lock:
+            pending = self.pending.get(request_id)
+            stream_queue = self.streams.get(request_id)
         if "error" in message:
             if stream_queue:
                 stream_queue.put(("error", message["error"]))
@@ -276,6 +292,10 @@ class PluginRuntimeManager:
         self.workers: dict[str, _WorkerConnection] = {}
         self.env_status: dict[str, str] = {}
         self.lock = threading.Lock()
+        self._env_locks: dict[str, threading.Lock] = {}
+        self._cleanup_stop = threading.Event()
+        self._cleanup_thread = threading.Thread(target=self._cleanup_loop, daemon=True)
+        self._cleanup_thread.start()
 
     def runtime_context(
         self,
@@ -371,7 +391,8 @@ class PluginRuntimeManager:
         )
 
     def stop_instance(self, package: PluginPackage, instance_id: str) -> None:
-        worker = self.workers.get(self._worker_key(package, instance_id))
+        with self.lock:
+            worker = self.workers.get(self._worker_key(package, instance_id))
         if worker is None:
             return
         try:
@@ -381,33 +402,74 @@ class PluginRuntimeManager:
 
     def worker_status(self, package: PluginPackage, instance_id: str | None = None) -> str:
         key = self._worker_key(package, instance_id or "")
-        worker = self.workers.get(key)
+        with self.lock:
+            worker = self.workers.get(key)
         return worker.status if worker else "stopped"
 
     def cleanup_idle_workers(self) -> None:
         now = time.monotonic()
-        for key, worker in list(self.workers.items()):
+        stale_workers: list[tuple[str, _WorkerConnection]] = []
+        with self.lock:
+            workers = list(self.workers.items())
+        for key, worker in workers:
             timeout = worker.package.runtime.worker.idle_timeout_seconds
-            if worker.status == "running" and now - worker.last_used > timeout:
-                worker.shutdown()
-                self.workers.pop(key, None)
+            if worker.status == "running" and not worker.is_busy and now - worker.last_used > timeout:
+                stale_workers.append((key, worker))
+        for key, worker in stale_workers:
+            worker.shutdown()
+            with self.lock:
+                if self.workers.get(key) is worker:
+                    self.workers.pop(key, None)
+
+    def shutdown(self) -> None:
+        self._cleanup_stop.set()
+        with self.lock:
+            workers = list(self.workers.items())
+            self.workers.clear()
+        for _, worker in workers:
+            worker.shutdown()
 
     def _get_worker(self, package: PluginPackage, instance_id: str) -> _WorkerConnection:
         key = self._worker_key(package, instance_id)
         with self.lock:
             worker = self.workers.get(key)
-            if worker is None:
-                env_python = self._ensure_environment(package)
-                worker = _WorkerConnection(
-                    key,
-                    package,
-                    self.runtime_dir,
-                    env_python,
-                    host_python_path=self._host_python_path(),
-                )
-                self.workers[key] = worker
+        if worker is not None:
             worker.start()
             return worker
+        env_lock = self._env_lock(f"{package.package_id}@{package.version}")
+        with env_lock:
+            env_python = self._ensure_environment(package)
+        new_worker = _WorkerConnection(
+            key,
+            package,
+            self.runtime_dir,
+            env_python,
+            host_python_path=self._host_python_path(),
+        )
+        with self.lock:
+            worker = self.workers.get(key)
+            if worker is None:
+                self.workers[key] = new_worker
+                worker = new_worker
+            else:
+                new_worker = worker
+        worker.start()
+        return worker
+
+    def _env_lock(self, key: str) -> threading.Lock:
+        with self.lock:
+            lock = self._env_locks.get(key)
+            if lock is None:
+                lock = threading.Lock()
+                self._env_locks[key] = lock
+            return lock
+
+    def _cleanup_loop(self) -> None:
+        while not self._cleanup_stop.wait(WORKER_CLEANUP_INTERVAL_SECONDS):
+            try:
+                self.cleanup_idle_workers()
+            except Exception:
+                logger.exception("Plugin worker cleanup failed")
 
     def _worker_key(self, package: PluginPackage, instance_id: str) -> str:
         if package.runtime.isolation.process == "instance":
@@ -427,10 +489,22 @@ class PluginRuntimeManager:
             raise WorkerRuntimeError("worker_env_failed", "uv is required to install plugin worker dependencies")
         venv_dir = self.env_root / package.package_id / package.version / ".venv"
         python = venv_dir / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
-        if not python.exists():
-            venv_dir.parent.mkdir(parents=True, exist_ok=True)
-            subprocess.run([uv, "venv", str(venv_dir), "--python", sys.executable], check=True, capture_output=True, text=True)
-        subprocess.run([uv, "pip", "install", "--python", str(python), *dependencies], check=True, capture_output=True, text=True)
+        deps_hash = hashlib.sha256(json.dumps(dependencies, sort_keys=True).encode("utf-8")).hexdigest()
+        stamp_path = venv_dir.parent / "dependencies.sha256"
+        if python.exists() and stamp_path.exists() and stamp_path.read_text().strip() == deps_hash:
+            self.env_status[env_key] = "ready"
+            return python
+        try:
+            if not python.exists():
+                venv_dir.parent.mkdir(parents=True, exist_ok=True)
+                subprocess.run([uv, "venv", str(venv_dir), "--python", sys.executable], check=True, capture_output=True, text=True)
+            subprocess.run([uv, "pip", "install", "--python", str(python), *dependencies], check=True, capture_output=True, text=True)
+            stamp_path.write_text(deps_hash)
+        except subprocess.CalledProcessError as exc:
+            self.env_status[env_key] = "failed"
+            details = {"returncode": exc.returncode, "stdout": exc.stdout, "stderr": exc.stderr}
+            message = (exc.stderr or exc.stdout or str(exc)).strip()
+            raise WorkerRuntimeError("worker_env_failed", message, details) from exc
         self.env_status[env_key] = "ready"
         return python
 

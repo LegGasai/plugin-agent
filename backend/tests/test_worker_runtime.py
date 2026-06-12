@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import textwrap
 from pathlib import Path
 
@@ -45,6 +46,7 @@ def write_worker_plugin(
     version: str = "1.0.0",
     process_scope: str = "package_version",
     state_scope: str = "instance",
+    idle_timeout_seconds: int = 60,
 ) -> Path:
     package_dir = root / f"{package_id.replace('.', '_')}_{version.replace('.', '_')}"
     package_dir.mkdir(parents=True)
@@ -62,7 +64,7 @@ def write_worker_plugin(
                 process: {process_scope}
                 state: {state_scope}
               worker:
-                idle_timeout_seconds: 60
+                idle_timeout_seconds: {idle_timeout_seconds}
                 start_timeout_seconds: 10
                 invoke_timeout_seconds: 10
             provides:
@@ -235,3 +237,43 @@ def test_worker_runtime_rejects_missing_uv_for_dependencies(tmp_path, monkeypatc
 
     assert runtime["status"] == "failed"
     assert any(diagnostic["code"] == "worker_env_failed" for diagnostic in runtime["diagnostics"])
+
+
+def test_worker_runtime_cleanup_stops_idle_workers(tmp_path):
+    service = AgentAssemblyService(runtime_dir=tmp_path / "runtime", market_dir=tmp_path / "market")
+    install_worker_package(service, write_worker_plugin(tmp_path / "packages", idle_timeout_seconds=0))
+    agent = service.create_agent("Agent", plugin_instances=[{"package_id": "worker.echo"}])
+    kernel = service.build_kernel_for_agent(agent["id"])
+    assert len(service.runtime_manager.workers) == 1
+
+    kernel.stop_all()
+    service.runtime_manager.cleanup_idle_workers()
+
+    assert service.runtime_manager.workers == {}
+
+
+def test_worker_runtime_reports_dependency_install_failure(tmp_path, monkeypatch):
+    service = AgentAssemblyService(runtime_dir=tmp_path / "runtime", market_dir=tmp_path / "market")
+    package_dir = write_worker_plugin(tmp_path / "packages", package_id="worker.bad_dep")
+    package_dir.joinpath("plugin.yaml").write_text(
+        package_dir.joinpath("plugin.yaml").read_text().replace(
+            "runtime:\n  type: python.worker",
+            "runtime:\n  type: python.worker\n  python:\n    dependencies:\n      - bad-package==0.0.1",
+        )
+    )
+    install_worker_package(service, package_dir)
+    agent = service.create_agent("Agent", plugin_instances=[{"package_id": "worker.bad_dep"}])
+    monkeypatch.setattr("plugin_agent.runtime.manager.shutil.which", lambda _: "/usr/bin/uv")
+
+    def fail_run(*args, **kwargs):
+        raise subprocess.CalledProcessError(2, args[0], stderr="dependency install failed")
+
+    monkeypatch.setattr("plugin_agent.runtime.manager.subprocess.run", fail_run)
+
+    runtime = service.agent_runtime(agent["id"])
+
+    assert runtime["status"] == "failed"
+    assert any(
+        diagnostic["code"] == "worker_env_failed" and "dependency install failed" in diagnostic["message"]
+        for diagnostic in runtime["diagnostics"]
+    )
