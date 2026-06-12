@@ -99,8 +99,8 @@ def validate_plugin_package(path: str | Path) -> dict[str, Any]:
     errors: list[str] = []
     try:
         package = package_from_path(path, source="market")
-        if package.runtime.type != "python.in_process":
-            errors.append("only python.in_process runtime is supported")
+        if package.runtime.type not in {"python.in_process", "python.worker"}:
+            errors.append("only python.in_process and python.worker runtimes are supported")
         if not package.runtime.entrypoint:
             errors.append("runtime.entrypoint is required")
     except Exception as exc:

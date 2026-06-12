@@ -10,6 +10,7 @@ import yaml
 from plugin_agent_sdk.contracts import (
     PluginDescriptor,
     PluginPackage,
+    PluginRuntimeContext,
     PluginState,
     ResourceSpec,
     RuntimeSpec,
@@ -47,6 +48,7 @@ class Plugin:
         self.state = PluginState.DISCOVERED
         self.generation = 1
         self.kernel: Any | None = None
+        self.runtime_context: PluginRuntimeContext | None = None
 
     def _read_yaml(self, path: Path) -> dict[str, Any]:
         data = yaml.safe_load(path.read_text()) or {}

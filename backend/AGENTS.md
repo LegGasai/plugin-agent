@@ -56,7 +56,7 @@ Keep the HTTP views distinct as well:
 - `DELETE /api/installed-plugin-packages/{package_id}` uninstalls installed packages when they are not used by saved plugin instances.
 - `GET /api/plugin-packages` is a compatibility alias for the installed-package view.
 
-External plugin packages use `.pluginpkg` zip files with a required `plugin.yaml`. Initial runtime support is `python.in_process` with an entrypoint like `plugin.py:WeatherPlugin`. External plugin classes must import and extend `plugin_agent_sdk.Plugin`. Entry modules may import sibling Python modules from the same plugin package.
+External plugin packages use `.pluginpkg` zip files with a required `plugin.yaml`. Runtime support includes `python.in_process` and `python.worker`, both with an entrypoint like `plugin.py:WeatherPlugin`. External plugin classes must import and extend `plugin_agent_sdk.Plugin`. Entry modules may import sibling Python modules from the same plugin package.
 
 Default package selection chooses the newest installed version for a `package_id`. The installed-package view exposes one active version per `package_id`. Older installed versions may remain only when saved Agent plugin instances still pin that `package_version`; do not surface those retained versions as separately installed plugins. `plugin-market/` is the product source of truth for plugin evolution, and runtime copies live under `.plugin-agent/installed-plugins/`.
 
@@ -123,6 +123,10 @@ Use `plugin_agent.assembly` as a stable compatibility import for existing caller
 
 For new product plugins, prepare an uploadable package directory with `plugin.yaml`, optional `config.yaml`, and an entrypoint such as `plugin.py`, then install it through the frontend marketplace upload flow. Include `runtime.type: python.in_process` and `runtime.entrypoint: plugin.py:<PluginClass>`. Larger plugins may include sibling modules or internal packages; keep `plugin.py` as a thin entrypoint when the implementation grows.
 
+Use `runtime.type: python.worker` when a plugin needs dependency isolation or process-level failure isolation. Worker plugins may declare `runtime.python.dependencies`, `runtime.isolation.process`, `runtime.isolation.state`, and worker timeouts. The default is one Worker per `package_id@version`, with separate plugin objects and state directories per `PluginInstance`; use `runtime.isolation.process: instance` only for higher-risk plugins.
+
+Worker plugins still communicate only through Kernel capabilities. Inside a Worker, `self.kernel.invoke(...)` and `self.kernel.stream(...)` are Host JSON-RPC callbacks to the active Agent kernel, not direct access to another plugin process.
+
 Marketplace plugin runtime code must depend on `plugin_agent_sdk` and standard/library dependencies only; do not import from private `plugin_agent.*` modules. If a marketplace plugin needs shared logic, duplicate the small adapter locally for now or move the shared surface into the public SDK.
 
 Add product plugins under `plugin-market/` as uploadable packages, then install them through the normal upload/install flow. Do not add plugin implementation packages under `src/plugin_agent/`; tests that need real product plugins should load them from `plugin-market/`.
@@ -168,6 +172,7 @@ uv run pytest tests/test_real_plugins.py -q
 uv run pytest tests/test_product_model.py -q
 uv run pytest tests/test_plugin_market.py -q
 uv run pytest tests/test_http_service.py -q
+uv run pytest tests/test_worker_runtime.py -q
 ```
 
 ## Local Run

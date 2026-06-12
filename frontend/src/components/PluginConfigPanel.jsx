@@ -58,16 +58,19 @@ export function PluginConfigPanel({ instance, pluginPackage, diagnostics = [], o
       <button className="plugin-card-head" onClick={() => setOpen((value) => !value)}>
         {open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
         <InstanceKindIcon kind={primaryKind} />
-        <span>
+        <span className="plugin-card-main">
           <strong>{instance.display_name}</strong>
-          <small>{instance.package_id} · v{version}</small>
+          <small>{instance.package_id}</small>
         </span>
-        {hasAttention && (
-          <em className="plugin-attention-badge" title={attentionText}>
-            <AlertTriangle size={12} />
-            {attentionLabel}
-          </em>
-        )}
+        <span className="plugin-card-badges">
+          <em className="plugin-version-badge">v{version}</em>
+          {hasAttention && (
+            <em className="plugin-attention-badge" title={attentionText}>
+              <AlertTriangle size={12} />
+              {attentionLabel}
+            </em>
+          )}
+        </span>
       </button>
       {open && (
         <div className="plugin-card-body">

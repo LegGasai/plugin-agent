@@ -1,6 +1,19 @@
+import { useEffect, useRef } from 'react';
 import { AlertTriangle, CheckCircle2, Info, X } from 'lucide-react';
 
-export function NotificationToast({ message, variant = 'info', onClose }) {
+export function NotificationToast({ message, variant = 'info', onClose, duration = 10000 }) {
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!message || !onCloseRef.current || !duration) return undefined;
+    const timer = window.setTimeout(() => onCloseRef.current?.(), duration);
+    return () => window.clearTimeout(timer);
+  }, [duration, message]);
+
   if (!message) return null;
   const Icon = variant === 'error' ? AlertTriangle : variant === 'success' ? CheckCircle2 : Info;
   return (

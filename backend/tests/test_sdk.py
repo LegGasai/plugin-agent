@@ -1,7 +1,8 @@
 import pytest
+from pydantic import ValidationError
 
 from plugin_agent.kernel import AgentKernel
-from plugin_agent_sdk import Plugin, PluginState, SchemaDefinition, StreamEvent
+from plugin_agent_sdk import Plugin, PluginRuntimeContext, PluginState, RuntimeSpec, SchemaDefinition, StreamEvent
 
 
 class SdkEchoPlugin(Plugin):
@@ -85,6 +86,45 @@ def test_public_sdk_exports_contract_models():
     schema = SchemaDefinition(schema_ref="schema://sdk.contract.v1", json_schema={"type": "object"})
 
     assert schema.schema_ref == "schema://sdk.contract.v1"
+
+
+def test_runtime_spec_parses_worker_runtime_options():
+    runtime = RuntimeSpec.model_validate(
+        {
+            "type": "python.worker",
+            "entrypoint": "plugin.py:WorkerPlugin",
+            "python": {"requires_python": ">=3.11", "dependencies": ["httpx>=0.27"]},
+            "isolation": {"process": "instance", "state": "shared"},
+            "worker": {"idle_timeout_seconds": 10, "start_timeout_seconds": 3, "invoke_timeout_seconds": 7},
+        }
+    )
+
+    assert runtime.type == "python.worker"
+    assert runtime.python.dependencies == ["httpx>=0.27"]
+    assert runtime.isolation.process == "instance"
+    assert runtime.isolation.state == "shared"
+    assert runtime.worker.invoke_timeout_seconds == 7
+
+
+def test_runtime_spec_rejects_invalid_isolation_options():
+    with pytest.raises(ValidationError):
+        RuntimeSpec.model_validate({"type": "python.worker", "isolation": {"process": "agent"}})
+
+
+def test_plugin_runtime_context_is_exposed_on_sdk_plugin():
+    plugin = SdkEchoPlugin(instance_id="sdk-echo-ctx")
+    plugin.runtime_context = PluginRuntimeContext(
+        agent_id="agent-1",
+        instance_id="sdk-echo-ctx",
+        package_id="sdk.echo",
+        package_version="1.0.0",
+        plugin_dir="/tmp/plugin",
+        state_dir="/tmp/state",
+        cache_dir="/tmp/cache",
+        temp_dir="/tmp/tmp",
+    )
+
+    assert plugin.runtime_context.state_dir == "/tmp/state"
 
 
 def test_public_sdk_plugin_stream_defaults_to_not_supported():

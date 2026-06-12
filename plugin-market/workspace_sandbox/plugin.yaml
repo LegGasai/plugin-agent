@@ -36,7 +36,7 @@ descriptor:
       input_schema_ref: schema://workspace.bash.input.v1
       output_schema_ref: schema://workspace.tool.output.v1
 runtime:
-  type: python.in_process
+  type: python.worker
   entrypoint: plugin.py:WorkspaceSandboxPlugin
 resources:
   - kind: tool

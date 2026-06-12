@@ -16,7 +16,7 @@ descriptor:
       input_schema_ref: schema://context.compressor.compress.input.v1
       output_schema_ref: schema://context.compressor.compress.output.v1
 runtime:
-  type: python.in_process
+  type: python.worker
   entrypoint: plugin.py:ModelContextCompressorPlugin
 resources:
   - kind: context

@@ -142,5 +142,5 @@ tool_definitions:
   output_schema_ref: schema://tool.math_add.output.v1
   invoke_capability: tool.math_add
 runtime:
-  type: python.in_process
+  type: python.worker
   entrypoint: plugin.py:BasicToolPlugin

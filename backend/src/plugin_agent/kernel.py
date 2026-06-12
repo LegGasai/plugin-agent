@@ -225,8 +225,9 @@ class AgentKernel:
             self.startup_order.append(plugin.instance_id)
         except Exception as exc:
             plugin.state = PluginState.FAILED
+            code = str(getattr(exc, "code", "plugin_start_failed"))
             self._add_diagnostic(
-                "plugin_start_failed",
+                code,
                 "error",
                 f"{plugin.id} failed to start: {exc}",
                 plugin,

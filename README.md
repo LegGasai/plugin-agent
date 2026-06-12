@@ -140,17 +140,17 @@ docker compose -f docker/docker-compose.yml config
 
 ## 后续演进
 
-Plugin Agent 会继续保持“微内核 + 插件运行时”的边界。当前 `python.in_process` 适合开发期和可信插件，后续本地 App 形态会优先演进为桌面壳启动本地后端，同时保留浏览器访问同一个 `localhost` 控制台的能力。
+Plugin Agent 会继续保持“微内核 + 插件运行时”的边界。当前 `python.in_process` 适合开发期和可信插件，`python.worker` 已提供第一版进程隔离运行时：Host Backend 负责 Agent 微内核、能力路由、会话、配置和诊断，Plugin Runtime Manager 负责插件环境、Worker 子进程、JSON-RPC 调用转发和实例状态目录。
 
-本地运行时会拆成两层：Host Backend 负责 Agent 微内核、能力路由、会话、配置和诊断；Plugin Runtime Daemon 专门负责用户插件的安装、解包、依赖环境、进程启动、日志、热重载和调用转发。用户上传的插件默认不直接 import 到 Host Backend，而是由 daemon 放进独立工作目录并通过结构化协议调用。
+`python.worker` 默认按 `package_id@version` 共享 Python 环境和 Worker 进程，同时按 `PluginInstance` 隔离插件对象、配置、secret 和 state/temp 目录。插件也可以声明 `runtime.isolation.process: instance`，让高风险插件按实例独立进程运行。插件之间仍然只通过 Kernel capability 通信，不直接互相 import。
 
-插件运行时会从单一 Python in-process 逐步扩展为可替换的 runtime adapter：
+后续本地 App 形态会优先演进为桌面壳启动本地后端，同时保留浏览器访问同一个 `localhost` 控制台的能力。运行时 adapter 仍会继续扩展：
 
-- `python.venv_process`：为每个 Python 插件创建独立工作目录和 `.venv`，通过进程边界、超时和结构化协议调用插件，降低依赖冲突和崩溃影响。
+- `python.worker`：为 Python 插件创建独立依赖环境，通过进程边界、超时和 JSON-RPC 调用插件，降低依赖冲突和崩溃影响。
 - `http` / `wasm`：为远端服务插件和更强隔离的本地插件预留运行时。
-- `Daemon Plugin`：使用隔离的daemon提供runtime依赖并运行插件。
+- 独立 Plugin Runtime Daemon：未来可把当前后端内的 runtime manager 拆为独立 daemon 进程。
 
-本地 App 打包时会内置受控 Python runtime，用户无需自行安装 Python；用户上传的插件仍可声明依赖、资源需求和权限边界，由 Plugin Runtime Daemon 负责准备运行环境并执行。
+本地 App 打包时会内置受控 Python runtime，用户无需自行安装 Python；用户上传的插件仍可声明依赖、资源需求和权限边界，由插件运行时负责准备运行环境并执行。
 
 ## 许可证
 

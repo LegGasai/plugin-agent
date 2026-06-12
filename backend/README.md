@@ -90,12 +90,34 @@ plugin.yaml
 plugin.py
 ```
 
-Initial runtime support is intentionally small:
+Runtime support is intentionally small:
 
-- `runtime.type` must be `python.in_process`.
+- `runtime.type` may be `python.in_process` or `python.worker`.
 - `runtime.entrypoint` must use `<file.py>:<PluginClass>`.
 - The plugin class must extend `plugin_agent_sdk.Plugin`.
 - Sibling Python modules inside the plugin package can be imported by the entrypoint module.
+- `python.worker` runs the plugin in a managed subprocess over JSON-RPC stdio. By default, one Worker is reused per `package_id@version`, while plugin objects and state directories remain isolated per `PluginInstance`.
+
+`python.worker` can declare private Python dependencies and isolation options:
+
+```yaml
+runtime:
+  type: python.worker
+  entrypoint: plugin.py:WorkerPlugin
+  python:
+    requires_python: ">=3.11"
+    dependencies:
+      - httpx>=0.27
+  isolation:
+    process: package_version
+    state: instance
+  worker:
+    idle_timeout_seconds: 300
+    start_timeout_seconds: 30
+    invoke_timeout_seconds: 120
+```
+
+Worker dependency environments live under `.plugin-agent/plugin-envs/{package_id}/{version}/.venv`. Instance state lives under `.plugin-agent/plugin-state/{agent_id}/{instance_id}` unless a plugin explicitly opts into shared state.
 
 Marketplace packages must include `runtime.entrypoint`. Product plugins should be uploaded through the marketplace flow so they can evolve without changing the host.
 

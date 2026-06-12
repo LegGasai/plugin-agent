@@ -16,7 +16,7 @@ descriptor:
       input_schema_ref: schema://agent.run.input.v1
       output_schema_ref: schema://agent.stream.event.v1
 runtime:
-  type: python.in_process
+  type: python.worker
   entrypoint: plugin.py:CodexBridgeAgentLoopPlugin
 resources:
   - kind: agent_loop
