@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -82,9 +82,39 @@ class RuntimeReport(BaseModel):
     startup_order: list[str] = Field(default_factory=list)
 
 
+class RuntimePythonSpec(BaseModel):
+    requires_python: str | None = None
+    dependencies: list[str] = Field(default_factory=list)
+
+
+class RuntimeIsolationSpec(BaseModel):
+    process: Literal["package_version", "instance"] = "package_version"
+    state: Literal["instance", "shared"] = "instance"
+
+
+class RuntimeWorkerSpec(BaseModel):
+    idle_timeout_seconds: int = 300
+    start_timeout_seconds: int = 30
+    invoke_timeout_seconds: int = 120
+
+
 class RuntimeSpec(BaseModel):
-    type: str = "python.in_process"
+    type: Literal["python.in_process", "python.worker"] = "python.in_process"
     entrypoint: str | None = None
+    python: RuntimePythonSpec = Field(default_factory=RuntimePythonSpec)
+    isolation: RuntimeIsolationSpec = Field(default_factory=RuntimeIsolationSpec)
+    worker: RuntimeWorkerSpec = Field(default_factory=RuntimeWorkerSpec)
+
+
+class PluginRuntimeContext(BaseModel):
+    agent_id: str
+    instance_id: str
+    package_id: str
+    package_version: str
+    plugin_dir: str
+    state_dir: str
+    cache_dir: str
+    temp_dir: str
 
 
 class ResourceSpec(BaseModel):

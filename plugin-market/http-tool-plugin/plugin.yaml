@@ -255,5 +255,5 @@ schemas:
                 - "null"
               additionalProperties: true
 runtime:
-  type: python.in_process
+  type: python.worker
   entrypoint: plugin.py:HttpRequestToolPlugin

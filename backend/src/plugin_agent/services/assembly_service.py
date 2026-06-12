@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+import yaml
 from jsonschema import ValidationError, validate
 
 from plugin_agent.kernel import AgentKernel, PluginBase
@@ -19,6 +20,7 @@ from plugin_agent.plugin_store import (
     load_installed_plugin_class,
     validate_plugin_package,
 )
+from plugin_agent.runtime import PluginRuntimeManager, RemotePluginProxy
 from plugin_agent.stores.product_store import ProductStore
 from plugin_agent.utils.config import (
     _encrypted_path_matches,
@@ -29,7 +31,7 @@ from plugin_agent.utils.config import (
 )
 from plugin_agent.utils.time import now_iso
 from plugin_agent.utils.versions import select_default_package, version_sort_key
-from plugin_agent_sdk import PluginPackage
+from plugin_agent_sdk import PluginPackage, PluginRuntimeContext
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +76,7 @@ class AgentAssemblyService:
         self.market_dir = Path(market_dir).expanduser() if market_dir else default_market_dir()
         self.installed_plugins_dir = self.runtime_dir / "installed-plugins"
         self.store = ProductStore(self.runtime_dir)
+        self.runtime_manager = PluginRuntimeManager(self.runtime_dir)
         self.plugin_config_overrides: dict[str, dict[str, Any]] = {}
         self.refresh_plugin_packages()
         logger.info("Agent assembly initialized runtime_dir=%s market_dir=%s", self.runtime_dir, self.market_dir)
@@ -327,11 +330,17 @@ class AgentAssemblyService:
 
     def agent_capabilities(self, agent_id: str) -> list[dict[str, Any]]:
         kernel = self.build_kernel_for_agent(agent_id)
-        return [binding.model_dump() for binding in kernel.capability_registry.list()]
+        try:
+            return [binding.model_dump() for binding in kernel.capability_registry.list()]
+        finally:
+            kernel.stop_all()
 
     def agent_resources(self, agent_id: str) -> list[dict[str, Any]]:
         kernel = self.build_kernel_for_agent(agent_id)
-        return [resource.model_dump() for resource in kernel.resource_registry.list()]
+        try:
+            return [resource.model_dump() for resource in kernel.resource_registry.list()]
+        finally:
+            kernel.stop_all()
 
     def agent_runtime(self, agent_id: str) -> dict[str, Any]:
         agent = self.store.get_agent(agent_id)
@@ -342,15 +351,19 @@ class AgentAssemblyService:
             capability_bindings=agent.get("capability_bindings", {}),
             raise_on_failed=False,
         )
-        return {
-            "status": kernel.runtime_status,
-            "diagnostics": [diagnostic.model_dump() for diagnostic in kernel.diagnostics],
-            "capability_bindings": agent.get("capability_bindings", {}),
-            "startup_order": kernel.startup_order,
-            "capabilities": [binding.model_dump() for binding in kernel.capability_registry.list()],
-            "capability_candidates": kernel.discover_capabilities(),
-            "resources": [resource.model_dump() for resource in kernel.resource_registry.list()],
-        }
+        try:
+            return {
+                "status": kernel.runtime_status,
+                "diagnostics": [diagnostic.model_dump() for diagnostic in kernel.diagnostics],
+                "capability_bindings": agent.get("capability_bindings", {}),
+                "startup_order": kernel.startup_order,
+                "capabilities": [binding.model_dump() for binding in kernel.capability_registry.list()],
+                "capability_candidates": kernel.discover_capabilities(),
+                "resources": [resource.model_dump() for resource in kernel.resource_registry.list()],
+                "plugins": [self.describe_plugin(plugin, enabled=True) for plugin in kernel.plugins.values()],
+            }
+        finally:
+            kernel.stop_all()
 
     def agent_capability_candidates(self, agent_id: str) -> list[dict[str, Any]]:
         agent = self.store.get_agent(agent_id)
@@ -361,7 +374,10 @@ class AgentAssemblyService:
             capability_bindings=agent.get("capability_bindings", {}),
             raise_on_failed=False,
         )
-        return kernel.discover_capabilities()
+        try:
+            return kernel.discover_capabilities()
+        finally:
+            kernel.stop_all()
 
     def run_saved_agent(self, agent_id: str, message: str, session_id: str | None = None) -> dict[str, Any]:
         kernel = self.build_kernel_for_agent(agent_id)
@@ -369,10 +385,13 @@ class AgentAssemblyService:
         history = self._history_for_session(session["session_id"])
         logger.info("Agent run started agent_id=%s session_id=%s", agent_id, session["session_id"])
         self.store.append_session_message(session["session_id"], "user", message)
-        result = kernel.invoke("agent.run", {"message": message}, {"agent_id": agent_id, "session_id": session["session_id"], "history_messages": history}).payload
-        self.store.append_session_message(session["session_id"], "assistant", result.get("answer", ""), result)
-        logger.info("Agent run completed agent_id=%s session_id=%s", agent_id, session["session_id"])
-        return {**result, "session_id": session["session_id"]}
+        try:
+            result = kernel.invoke("agent.run", {"message": message}, {"agent_id": agent_id, "session_id": session["session_id"], "history_messages": history}).payload
+            self.store.append_session_message(session["session_id"], "assistant", result.get("answer", ""), result)
+            logger.info("Agent run completed agent_id=%s session_id=%s", agent_id, session["session_id"])
+            return {**result, "session_id": session["session_id"]}
+        finally:
+            kernel.stop_all()
 
     def get_plugin_config(self, plugin_id: str, redact: bool = True) -> dict[str, Any]:
         plugin = self.instantiate_plugin(plugin_id)
@@ -413,10 +432,16 @@ class AgentAssemblyService:
         capability_bindings: dict[str, str] | None = None,
         raise_on_failed: bool = True,
     ) -> AgentKernel:
-        instances = [
-            self._create_instance_record("adhoc-agent", {"package_id": plugin_id, "config": (configs or {}).get(plugin_id, {})}, persist_secrets=False)
-            for plugin_id in (plugin_ids or DEFAULT_AGENT_PLUGIN_IDS)
-        ]
+        instances = []
+        for plugin_id in plugin_ids or DEFAULT_AGENT_PLUGIN_IDS:
+            config = deep_merge(self.plugin_config_overrides.get(plugin_id, {}), (configs or {}).get(plugin_id, {}))
+            instances.append(
+                self._create_instance_record(
+                    "adhoc-agent",
+                    {"package_id": plugin_id, "config": config},
+                    persist_secrets=False,
+                )
+            )
         return self._build_kernel_from_instances(
             instances,
             agent_id="adhoc-agent",
@@ -426,15 +451,24 @@ class AgentAssemblyService:
 
     def stream_agent(self, message: str, plugin_ids: list[str] | None = None, configs: dict[str, dict[str, Any]] | None = None) -> Any:
         kernel = self.build_kernel(plugin_ids, configs)
-        yield from kernel.stream("agent.stream", {"message": message}, {"agent_id": "adhoc-agent"})
+        try:
+            yield from kernel.stream("agent.stream", {"message": message}, {"agent_id": "adhoc-agent"})
+        finally:
+            kernel.stop_all()
 
     def assemble(self, plugin_ids: list[str] | None = None, configs: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
         kernel = self.build_kernel(plugin_ids, configs)
-        return self._describe_assembly(kernel)
+        try:
+            return self._describe_assembly(kernel)
+        finally:
+            kernel.stop_all()
 
     def run_agent(self, message: str, plugin_ids: list[str] | None = None, configs: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
         kernel = self.build_kernel(plugin_ids, configs)
-        return kernel.invoke("agent.run", {"message": message}, {"agent_id": "adhoc-agent"}).payload
+        try:
+            return kernel.invoke("agent.run", {"message": message}, {"agent_id": "adhoc-agent"}).payload
+        finally:
+            kernel.stop_all()
 
     def stream_saved_agent(self, agent_id: str, message: str, session_id: str | None = None) -> Any:
         kernel = self.build_kernel_for_agent(agent_id)
@@ -442,17 +476,20 @@ class AgentAssemblyService:
         history = self._history_for_session(session["session_id"])
         logger.info("Agent stream started agent_id=%s session_id=%s", agent_id, session["session_id"])
         self.store.append_session_message(session["session_id"], "user", message)
-        for event in kernel.stream("agent.stream", {"message": message}, {"agent_id": agent_id, "session_id": session["session_id"], "history_messages": history}):
-            if event["type"] == "run_completed":
-                self.store.append_session_message(session["session_id"], "assistant", event.get("payload", {}).get("answer", ""), event.get("payload", {}))
-                event = {**event, "payload": {**event.get("payload", {}), "session_id": session["session_id"]}}
-                logger.info("Agent stream completed agent_id=%s session_id=%s", agent_id, session["session_id"])
-            elif event["type"] == "run_failed":
-                payload = event.get("payload", {})
-                self.store.append_session_message(session["session_id"], "assistant", payload.get("answer") or payload.get("error") or "运行失败", payload)
-                event = {**event, "payload": {**payload, "session_id": session["session_id"]}}
-                logger.warning("Agent stream failed agent_id=%s session_id=%s", agent_id, session["session_id"])
-            yield event
+        try:
+            for event in kernel.stream("agent.stream", {"message": message}, {"agent_id": agent_id, "session_id": session["session_id"], "history_messages": history}):
+                if event["type"] == "run_completed":
+                    self.store.append_session_message(session["session_id"], "assistant", event.get("payload", {}).get("answer", ""), event.get("payload", {}))
+                    event = {**event, "payload": {**event.get("payload", {}), "session_id": session["session_id"]}}
+                    logger.info("Agent stream completed agent_id=%s session_id=%s", agent_id, session["session_id"])
+                elif event["type"] == "run_failed":
+                    payload = event.get("payload", {})
+                    self.store.append_session_message(session["session_id"], "assistant", payload.get("answer") or payload.get("error") or "运行失败", payload)
+                    event = {**event, "payload": {**payload, "session_id": session["session_id"]}}
+                    logger.warning("Agent stream failed agent_id=%s session_id=%s", agent_id, session["session_id"])
+                yield event
+        finally:
+            kernel.stop_all()
 
     def instantiate_plugin(
         self,
@@ -460,26 +497,36 @@ class AgentAssemblyService:
         config: dict[str, Any] | None = None,
         instance_id: str | None = None,
         package_version: str | None = None,
+        agent_id: str = "adhoc-agent",
     ) -> PluginBase:
-        merged = deep_merge(self.plugin_config_overrides.get(package_id, {}), config or {})
+        explicit_config = config or {}
         try:
             package = self.store.get_package(package_id, package_version)
         except KeyError:
             package = None
-        if package and package.get("source") == "installed":
-            installed_path = package.get("installed_path")
-            entrypoint = package.get("entrypoint")
-            if not installed_path or not entrypoint:
-                raise KeyError(f"installed plugin package is missing runtime entrypoint: {package_id}")
-            plugin_class = load_installed_plugin_class(installed_path, entrypoint)
-            return plugin_class(merged or None, instance_id=instance_id)
         package = package or self.store.get_package(package_id, package_version)
         installed_path = package.get("installed_path")
         entrypoint = package.get("entrypoint")
         if not installed_path or not entrypoint:
             raise KeyError(f"unknown plugin package: {package_id}")
+        package_model = PluginPackage.model_validate(package)
+        merged = deep_merge(self._default_instance_config(package_id, package_model.version), self.plugin_config_overrides.get(package_id, {}))
+        merged = deep_merge(merged, explicit_config)
+        if package_model.runtime.type == "python.worker":
+            return RemotePluginProxy(
+                package_model,
+                self.runtime_manager,
+                installed_path,
+                merged or None,
+                instance_id=instance_id,
+                agent_id=agent_id,
+            )
         plugin_class = load_installed_plugin_class(installed_path, entrypoint)
-        return plugin_class(merged or None, instance_id=instance_id)
+        plugin = plugin_class(merged or None, instance_id=instance_id)
+        plugin.runtime_context = PluginRuntimeContext.model_validate(
+            self.runtime_manager.runtime_context(package_model, agent_id, plugin.instance_id, installed_path)
+        )
+        return plugin
 
     def describe_plugin(self, plugin: PluginBase, enabled: bool) -> dict[str, Any]:
         package = plugin.package_model()
@@ -498,6 +545,11 @@ class AgentAssemblyService:
             "config_schema_ref": package.config_schema_ref,
             "schemas": [schema.model_dump() for schema in package.schemas],
             "manifest_path": str(plugin.manifest_path),
+            "runtime_type": package.runtime.type,
+            "worker_scope": package.runtime.isolation.process,
+            "state_scope": package.runtime.isolation.state,
+            "worker_status": getattr(plugin, "worker_status", None),
+            "env_status": getattr(plugin, "env_status", None),
         }
 
     def _build_kernel_from_instances(
@@ -516,6 +568,7 @@ class AgentAssemblyService:
                 config,
                 instance["instance_id"],
                 package_version=instance.get("package_version"),
+                agent_id=agent_id,
             )
             plugin.generation = int(instance.get("generation", 1))
             plugins.append(plugin)
@@ -769,7 +822,17 @@ class AgentAssemblyService:
         return hydrated
 
     def _default_instance_config(self, package_id: str, package_version: str | None = None) -> dict[str, Any]:
-        return json.loads(json.dumps(self.instantiate_plugin(package_id, package_version=package_version).config))
+        package = self.store.get_package(package_id, package_version)
+        installed_path = package.get("installed_path")
+        if not installed_path:
+            return {}
+        config_path = Path(installed_path) / "config.yaml"
+        if not config_path.exists():
+            return {}
+        data = yaml.safe_load(config_path.read_text()) or {}
+        if not isinstance(data, dict):
+            raise ValueError(f"{config_path} must contain a YAML object")
+        return json.loads(json.dumps(data))
 
     def _config_schema_for_package(self, package_id: str, package_version: str | None = None) -> dict[str, Any] | None:
         package = self.store.get_package(package_id, package_version)

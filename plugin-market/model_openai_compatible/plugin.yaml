@@ -105,5 +105,5 @@ schemas:
       payload:
         type: object
 runtime:
-  type: python.in_process
+  type: python.worker
   entrypoint: plugin.py:OpenAICompatibleModelPlugin

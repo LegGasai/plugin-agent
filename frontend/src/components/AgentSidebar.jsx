@@ -1,12 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Bot, CheckCircle2, Database, Gauge, Link2, Save, Settings, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Database, Gauge, Link2, Settings, X } from 'lucide-react';
 import { resourceLabel, stripRedactedSecrets } from '../lib/plugins.js';
 import { PluginConfigPanel } from './PluginConfigPanel.jsx';
 
 export function AgentSidebar({
-  agents,
-  activeAgentId,
-  setActiveAgentId,
   agentDetails,
   resources,
   capabilities,
@@ -15,26 +12,11 @@ export function AgentSidebar({
   diagnostics,
   runtimeStatus,
   packages,
-  updateAgent,
   saveCapabilityBinding,
   saveCapabilityBindings,
   savePluginConfig,
   restartPluginInstance,
 }) {
-  const [draftName, setDraftName] = useState('');
-  const [draftDescription, setDraftDescription] = useState('');
-  const [isSavingAgent, setIsSavingAgent] = useState(false);
-
-  useEffect(() => {
-    setDraftName(agentDetails?.name || '');
-    setDraftDescription(agentDetails?.description || '');
-    setIsSavingAgent(false);
-  }, [agentDetails?.id, agentDetails?.name, agentDetails?.description]);
-
-  const isAgentDirty = useMemo(() => (
-    Boolean(agentDetails)
-    && (draftName.trim() !== (agentDetails.name || '') || draftDescription.trim() !== (agentDetails.description || ''))
-  ), [agentDetails, draftDescription, draftName]);
   const pluginConfigItems = useMemo(() => (
     (agentDetails?.plugin_instances || [])
       .map((instance, index) => ({
@@ -48,65 +30,9 @@ export function AgentSidebar({
       ))
   ), [agentDetails?.plugin_instances, diagnostics]);
 
-  async function handleAgentSubmit(event) {
-    event.preventDefault();
-    if (!agentDetails || !draftName.trim() || !isAgentDirty) return;
-    setIsSavingAgent(true);
-    try {
-      await updateAgent(agentDetails.id, {
-        name: draftName.trim(),
-        description: draftDescription.trim(),
-      });
-    } finally {
-      setIsSavingAgent(false);
-    }
-  }
-
   return (
     <section className="sidebar-content">
       <div className="agent-config-overview">
-        <div className="sidebar-section compact agent-picker-section">
-          <div className="section-title"><Bot size={16} />智能体</div>
-          <label className="agent-select-wrap">
-            <select value={activeAgentId} onChange={(event) => setActiveAgentId(event.target.value)} aria-label="选择智能体">
-              <option value="">选择智能体</option>
-              {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
-            </select>
-          </label>
-          {agentDetails ? (
-            <form className="agent-edit-form" onSubmit={handleAgentSubmit}>
-              <label className="agent-field">
-                <span>名称</span>
-                <input
-                  value={draftName}
-                  onChange={(event) => setDraftName(event.target.value)}
-                  placeholder="智能体名称"
-                  maxLength={64}
-                />
-              </label>
-              <label className="agent-field">
-                <span>描述</span>
-                <textarea
-                  value={draftDescription}
-                  onChange={(event) => setDraftDescription(event.target.value)}
-                  placeholder="描述这个智能体的用途"
-                  rows={2}
-                  maxLength={180}
-                />
-              </label>
-              <div className="agent-edit-actions">
-                <span>当前配置对象</span>
-                <button className="mini-button primary-mini" type="submit" disabled={!isAgentDirty || !draftName.trim() || isSavingAgent}>
-                  <Save size={13} />
-                  {isSavingAgent ? '保存中' : '保存'}
-                </button>
-              </div>
-            </form>
-          ) : (
-            <p className="empty">还没有智能体。可以先创建默认智能体。</p>
-          )}
-        </div>
-
         <RuntimeOverview
           agentDetails={agentDetails}
           resources={resources}
@@ -269,11 +195,6 @@ function RuntimeOverview({
           ))}
           {!resources.length && <span className="empty-resource">暂无资源</span>}
         </div>
-      </div>
-      <div className="runtime-footnote">
-        <span>能力路由</span>
-        <strong>{capabilities.length ? `${capabilities.length} 个接口已注册` : '暂无接口'}</strong>
-        <small>资源用于发现，能力用于调用。</small>
       </div>
       {diagnostics.length ? (
         <div className={`diagnostic-panel ${diagnosticTone}`}>
